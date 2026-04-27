@@ -336,6 +336,12 @@ Date: ${new Date().toLocaleString()}
   app.get('/api/dataset/download', (req, res) => {
     try {
       const memoryDir = path.join(process.cwd(), 'data', 'brain');
+      if (!fs.existsSync(memoryDir)) {
+        res.setHeader('Content-Type', 'application/x-ndjson');
+        res.setHeader('Content-Disposition', 'attachment; filename="mure_finetune_dataset.jsonl"');
+        res.end();
+        return;
+      }
       const files = fs.readdirSync(memoryDir).filter((f: string) => f.startsWith('causal_memory_') && f.endsWith('.json'));
       
       res.setHeader('Content-Type', 'application/x-ndjson');
@@ -349,17 +355,24 @@ Date: ${new Date().toLocaleString()}
             if (!rule.cause || !rule.effect) continue;
             
             let instruction, output;
-            const type = Math.floor(Math.random() * 3);
+            const type = Math.floor(Math.random() * 4);
             
+            const cause = String(rule.cause).trim();
+            const effect = String(rule.effect).trim();
+            const strength = rule.strength ? ` (Confidence: ${rule.strength})` : '';
+
             if (type === 0) {
-              instruction = `What is the effect of: '${rule.cause}'?`;
-              output = `Based on MURE logical reasoning, '${rule.cause}' causes '${rule.effect}'.`;
+              instruction = `What is the logical consequence of the following situation: "${cause}"?`;
+              output = `The logical consequence of "${cause}" is "${effect}"${strength}.`;
             } else if (type === 1) {
-              instruction = `Identify the causal relationship between '${rule.cause}' and '${rule.effect}'.`;
-              output = `There is a causal relationship: '${rule.cause}' leads to '${rule.effect}'.`;
+              instruction = `Analyze the causal relationship: What happens as a result of "${cause}"?`;
+              output = `Based on logical deduction, "${cause}" leads to "${effect}"${strength}.`;
+            } else if (type === 2) {
+              instruction = `Given the cause: "${cause}", determine the expected effect.`;
+              output = `The expected effect is: "${effect}". This causal link is established by MURE reasoning.`;
             } else {
-              instruction = `If '${rule.cause}' happens, what will logically follow?`;
-              output = `Logically, this will result in '${rule.effect}'.`;
+              instruction = `Predict the outcome if this condition is met: "${cause}"`;
+              output = `If this condition is met, it will inevitably result in "${effect}"${strength}.`;
             }
             
             res.write(JSON.stringify({ instruction, input: "", output }) + '\n');
