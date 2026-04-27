@@ -1,0 +1,6 @@
+{
+  "name": "MURE SVO-CC Brain",
+  "description": "A Pure SVO-CC (Subject-Verb-Object-Complement-Cause-Effect) based AGI implementation with causal reasoning and semantic frame parsing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

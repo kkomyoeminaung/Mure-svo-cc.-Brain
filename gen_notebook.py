@@ -1,0 +1,125 @@
+import json
+
+# Minimal IPO notebook generator script for the merge
+def create_merged_notebook():
+    notebook = {
+        "nbformat": 4,
+        "nbformat_minor": 0,
+        "metadata": {
+            "colab": {"name": "MURE_PRD_Merged_v3"},
+            "accelerator": "GPU"
+        },
+        "cells": [
+            {
+                "cell_type": "markdown",
+                "source": [
+                    "# 🧠 MURE x PRD-LLM: The Teacher-less Integration\n",
+                    "**Body: PRD-LLM (Qwen 7B) | Soul: MURE SVO-CC (1M+ Rules)**\n",
+                    "\n",
+                    "This system uses MURE as the primary reasoning engine and PRD-LLM for natural language generation. No Teacher APIs (Gemini/Groq/OpenAI) are used."
+                ]
+            },
+            {
+                "cell_type": "code",
+                "source": [
+                    "# @title 1. Setup & Dependencies\n",
+                    "!pip install transformers accelerate bitsandbytes peft fastapi uvicorn pyngrok nest-asyncio pypdf python-docx beautifulsoup4 trafilatura -q\n",
+                    "import os, sys, torch\n",
+                    "from google.colab import drive\n",
+                    "drive.mount('/content/drive')\n",
+                    "BRAIN_PATH = '/content/drive/MyDrive/svo cc brain'\n",
+                    "os.makedirs(BRAIN_PATH, exist_ok=True)"
+                ]
+            },
+            {
+                "cell_type": "markdown",
+                "source": ["## 🧬 Part 1: MURE Soul (Python Implementation)"]
+            },
+            {
+                "cell_type": "code",
+                "source": [
+                    "# @title 2. MURE Reasoner Logic\n",
+                    "import unicodedata, re, json, time\n",
+                    "\n",
+                    "class MyanmarProcessor:\n",
+                    "    @staticmethod\n",
+                    "    def is_myanmar(text): return any(0x1000 <= ord(c) <= 0x109F for c in text)\n",
+                    "    @staticmethod\n",
+                    "    def normalize(text): return unicodedata.normalize('NFC', text)\n",
+                    "    @staticmethod\n",
+                    "    def segment(text):\n",
+                    "        r = r'[\\u1000-\\u1021\\u1023-\\u1027\\u1029\\u102a\\u103f\\u104c\\u104d][\\u102b-\\u103e]*[\\u1039\\u103a]?'\n",
+                    "        m = re.findall(r, text)\n",
+                    "        return m if m else text.split()\n",
+                    "\n",
+                    "class MURE:\n",
+                    "    def __init__(self, path):\n",
+                    "        self.path = path\n",
+                    "        self.rules = []\n",
+                    "        self.index = {}\n",
+                    "        if os.path.exists(path):\n",
+                    "            with open(path, 'r') as f: self.rules = json.load(f)\n",
+                    "        self._reindex()\n",
+                    "\n",
+                    "    def _reindex(self):\n",
+                    "        self.index = {}\n",
+                    "        for r in self.rules:\n",
+                    "            c = r.get('cause', '').lower()\n",
+                    "            if c not in self.index: self.index[c] = []\n",
+                    "            self.index[c].append(r)\n",
+                    "\n",
+                    "    def reason(self, text):\n",
+                    "        text = MyanmarProcessor.normalize(text).lower()\n",
+                    "        res = {'cause': text, 'effect': None, 'strength': 0}\n",
+                    "        matches = self.index.get(text, [])\n",
+                    "        if matches:\n",
+                    "            best = max(matches, key=lambda x: x.get('strength', 0))\n",
+                    "            res['effect'] = best['effect']\n",
+                    "            res['strength'] = best['strength']\n",
+                    "        return res"
+                ]
+            },
+            {
+                "cell_type": "markdown",
+                "source": ["## 🤖 Part 2: PRD-LLM Body (Qwen 7B)"]
+            },
+            {
+                "cell_type": "code",
+                "source": [
+                    "# @title 3. Model Loader (4-bit Quantized)\n",
+                    "from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig\n",
+                    "\n",
+                    "MODEL_ID = 'Qwen/Qwen2.5-7B-Instruct'\n",
+                    "bnb_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16)\n",
+                    "tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)\n",
+                    "model = AutoModelForCausalLM.from_pretrained(MODEL_ID, quantization_config=bnb_config, device_map='auto')"
+                ]
+            },
+            {
+                "cell_type": "code",
+                "source": [
+                    "# @title 4. Merged Chat Engine\n",
+                    "mure_soul = MURE(f'{BRAIN_PATH}/rules/rules.json')\n",
+                    "\n",
+                    "def merged_chat(message):\n",
+                    "    logic = mure_soul.reason(message)\n",
+                    "    context = \"\"\n",
+                    "    if logic['effect']:\n",
+                    "        context = f\"MURE Reasoning: {logic['cause']} -> {logic['effect']} (Confidence: {int(logic['strength']*100)}%)\"\n",
+                    "    \n",
+                    "    prompt = f\"<|system|>You are MURE, an AI with causal logic soul. Context: {context}<|user|>{message}<|assistant|>\"\n",
+                    "    inputs = tokenizer(prompt, return_tensors='pt').to('cuda')\n",
+                    "    with torch.no_grad():\n",
+                    "        out = model.generate(**inputs, max_new_tokens=512)\n",
+                    "    return tokenizer.decode(out[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)\n",
+                    "\n",
+                    "print(merged_chat('မိုးရွာရင် ဘာဖြစ်မလဲ'))"
+                ]
+            }
+        ]
+    }
+    with open('MURE_PRD_Merged_v3.ipynb', 'w') as f:
+        json.dump(notebook, f, indent=2)
+
+if __name__ == '__main__':
+    create_merged_notebook()
