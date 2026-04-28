@@ -191,9 +191,13 @@ DOMAIN_RULES = {
     ],
 }
 
-def load_base_rules():
+def load_base_rules(custom_rules_path=None):
     """Load rules from rules.json"""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/brain/rules.json")
+    if custom_rules_path and os.path.exists(custom_rules_path):
+        path = custom_rules_path
+    else:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/brain/rules.json")
+    
     if os.path.exists(path):
         with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -291,12 +295,12 @@ def generate_negation_entries(all_rules, max_entries=100000):
         if len(entries) >= max_entries: break
     return entries
 
-def generate_dataset(target_count=2_000_000, output_file="mure_finetune_2M.jsonl"):
+def generate_dataset(target_count=2_000_000, output_file="mure_finetune_2M.jsonl", rules_path=None):
     print(f"🚀 Generating {target_count:,} training examples...")
     start = time.time()
     
     # Collect all rules
-    base_rules = load_base_rules()
+    base_rules = load_base_rules(rules_path)
     domain_rules_list = []
     for domain, rules in DOMAIN_RULES.items():
         for cause, effect, strength in rules:
