@@ -29,9 +29,17 @@ export class MureApiService {
 
   async healthCheck(): Promise<boolean> {
     try {
+      if (!this.backendUrl || this.backendUrl.includes('localhost:8000')) {
+        // Simple optimization: don't even try if it's default and we know we're in AI Studio environment
+        // but user might be running it locally, so we check with a short timeout
+      }
+      
       const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 1000); // 1 second timeout
-      const res = await fetch(`${this.backendUrl}/health`, { signal: controller.signal });
+      const id = setTimeout(() => controller.abort(), 1000); 
+      const res = await fetch(`${this.backendUrl}/health`, { 
+        signal: controller.signal,
+        headers: { 'Accept': 'application/json' }
+      });
       clearTimeout(id);
       return res.ok;
     } catch {
@@ -87,11 +95,23 @@ export class MureApiService {
 
   async getStats(): Promise<Partial<BrainStats>> {
     try {
-       const res = await fetch(`${this.backendUrl}/stats`);
-       if (!res.ok) throw new Error();
-       return res.json();
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 1500); // 1.5s timeout for fast fallback
+      
+      const res = await fetch(`${this.backendUrl}/stats`, { signal: controller.signal });
+      clearTimeout(id);
+      
+      if (!res.ok) throw new Error();
+      return await res.json();
     } catch {
-       return {};
+      try {
+        // Fallback to local server
+        const fallbackRes = await fetch('/api/stats');
+        if (!fallbackRes.ok) return {};
+        return await fallbackRes.json();
+      } catch {
+        return {};
+      }
     }
   }
 }

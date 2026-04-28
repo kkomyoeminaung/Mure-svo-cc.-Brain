@@ -246,25 +246,22 @@ export default function App() {
       setGraphData(data);
       setIsOffline(false);
     } catch (e) {
-      console.error('Failed to fetch graph:', e);
-      setIsOffline(true);
+      console.warn('Network sync pending for knowledge graph');
+      // Don't set offline immediately on first failure to allow server startup
     }
   };
 
   const handleDream = async () => {
     try {
       const res = await fetch('/api/dream', { method: 'POST' });
-      if (!res.ok) return; // Silent skip for status errors in background
+      if (!res.ok) return; 
       const data = await res.json();
       if (data.connection) {
         setDreams(prev => [data.connection, ...prev].slice(0, 5));
         fetchStats();
       }
-      setIsOffline(false);
     } catch (e) {
-      // More subtle logging for background task failure
-      console.warn('Dream background sync skipped - connection pending');
-      // Only mark offline if it's truly a connection issue AND non-dreaming fetches also fail
+      // Silent skip for background dream tasks
     }
   };
 
@@ -276,14 +273,16 @@ export default function App() {
 
   const fetchStats = async () => {
     try {
-      const res = await fetch('/api/stats');
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      const data = await res.json();
-      setStats(data);
-      setIsOffline(false);
+      // Use mureApi which now has dual-fallback (Python -> Local)
+      const data = await mureApi.getStats();
+      if (Object.keys(data).length > 0) {
+        setStats(prev => ({ ...prev, ...data }));
+        setIsOffline(false);
+      }
     } catch (e) {
-      console.error('Failed to fetch stats', e);
-      setIsOffline(true);
+      console.error('Core Stats Synchronization Fault', e);
+      // Only set offline if we have no local data and requests are failing
+      if (stats.causalRules === 0) setIsOffline(true);
     }
   };
 

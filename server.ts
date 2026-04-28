@@ -32,6 +32,12 @@ async function startServer() {
   app.use(express.json({ limit: '500mb' }));
   app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
+  // Log all requests for debugging
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+  });
+
   // API Routes
     app.post('/api/chat', async (req, res) => {
       try {
@@ -315,7 +321,13 @@ Date: ${new Date().toLocaleString()}
   });
 
   app.get('/api/stats', (req, res) => {
-    res.json(reasoner.getStats());
+    try {
+      const stats = reasoner.getStats();
+      res.json(stats);
+    } catch (e) {
+      console.error('Error fetching stats:', e);
+      res.status(500).json({ error: 'Failed to retrieve brain statistics' });
+    }
   });
 
   app.post('/api/dream', (req, res) => {
@@ -388,11 +400,16 @@ Date: ${new Date().toLocaleString()}
 
   app.get('/api/dataset/colab', (req, res) => {
     try {
-      const colabPath = path.join(process.cwd(), 'MURE_LLM_FINETUNE.ipynb');
+      const colabPath = path.join(process.cwd(), 'MURE_OneClick_FineTune.ipynb');
       res.download(colabPath);
     } catch (e) {
       res.status(500).send("Colab file not found");
     }
+  });
+
+  // Health check for local server
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'online', type: 'local_ts_backend', timestamp: new Date().toISOString() });
   });
 
   // Vite middleware for development
