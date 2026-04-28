@@ -295,7 +295,7 @@ def generate_negation_entries(all_rules, max_entries=100000):
         if len(entries) >= max_entries: break
     return entries
 
-def generate_dataset(target_count=2_000_000, output_file="mure_finetune_2M.jsonl", rules_path=None):
+def generate_dataset(target_count=5_000_000, output_file="mure_finetune_5M.jsonl", rules_path=None):
     print(f"🚀 Generating {target_count:,} training examples...")
     start = time.time()
     
@@ -310,90 +310,56 @@ def generate_dataset(target_count=2_000_000, output_file="mure_finetune_2M.jsonl
             })
     
     all_rules = base_rules + domain_rules_list
+    if not all_rules:
+        print("⚠️ No rules found. Using fallback hardcoded rules.")
+        all_rules = [{"cause": "test", "effect": "result", "strength": 0.9}]
+
     rules_by_cause = {}
     for r in all_rules:
-        k = r.get('cause', '').lower()
+        k = str(r.get('cause', '')).lower()
         if k not in rules_by_cause:
             rules_by_cause[k] = []
         rules_by_cause[k].append(r)
     
-    total_base = len(all_rules)
-    print(f"  Base rules loaded: {total_base:,}")
+    print(f"  Base rules ready: {len(all_rules):,}")
     
     entries_written = 0
-    BATCH = 50000
+    BATCH_SIZE = 100000
     
     with open(output_file, 'w', encoding='utf-8') as out_f:
-        
-        # Phase 1: Core template expansion (~900K entries)
-        print("  Phase 1: Template expansion...")
-        phase1_target = int(target_count * 0.45)
-        while entries_written < phase1_target:
-            rule = random.choice(all_rules)
-            cause = rule.get('cause', '')
-            effect = rule.get('effect', '')
-            strength = rule.get('strength', rule.get('confidence', 0.8))
-            if not cause or not effect:
-                continue
-            tmpl = random.choice(CAUSAL_TEMPLATES)
-            instruction, output = format_template(tmpl, cause, effect, strength)
-            if instruction and output:
-                out_f.write(json.dumps({"instruction": instruction, "input": "", "output": output}, ensure_ascii=False) + '\n')
-                entries_written += 1
-                if entries_written % BATCH == 0:
-                    print(f"    {entries_written:,} / {target_count:,} ({entries_written*100/target_count:.1f}%)")
-        
-        # Phase 2: Causal chain entries (~300K)
-        print("  Phase 2: Causal chain reasoning...")
-        chain_entries = generate_chain_entries(rules_by_cause, int(target_count * 0.15))
-        for e in chain_entries:
-            out_f.write(json.dumps(e, ensure_ascii=False) + '\n')
-            entries_written += 1
-            if entries_written % BATCH == 0:
-                print(f"    {entries_written:,} / {target_count:,} ({entries_written*100/target_count:.1f}%)")
-        
-        # Phase 3: Comparison entries (~200K)
-        print("  Phase 3: Comparison reasoning...")
-        comp_entries = generate_comparison_entries(all_rules, int(target_count * 0.10))
-        for e in comp_entries:
-            out_f.write(json.dumps(e, ensure_ascii=False) + '\n')
-            entries_written += 1
-            if entries_written % BATCH == 0:
-                print(f"    {entries_written:,} / {target_count:,} ({entries_written*100/target_count:.1f}%)")
-        
-        # Phase 4: Negation/counterfactual entries (~100K)
-        print("  Phase 4: Negation & counterfactuals...")
-        neg_entries = generate_negation_entries(all_rules, int(target_count * 0.05))
-        for e in neg_entries:
-            out_f.write(json.dumps(e, ensure_ascii=False) + '\n')
-            entries_written += 1
-        
-        # Phase 5: Fill remaining to hit target
-        print("  Phase 5: Filling to target...")
         while entries_written < target_count:
-            rule = random.choice(all_rules)
-            cause = rule.get('cause', '')
-            effect = rule.get('effect', '')
-            strength = rule.get('strength', rule.get('confidence', 0.8))
-            if not cause or not effect:
-                continue
-            tmpl = random.choice(CAUSAL_TEMPLATES)
-            instruction, output = format_template(tmpl, cause, effect, strength)
-            if instruction and output:
-                out_f.write(json.dumps({"instruction": instruction, "input": "", "output": output}, ensure_ascii=False) + '\n')
+            # Randomly pick strategy to ensure diversity in 5M entries
+            strategy = random.random()
+            
+            if strategy < 0.6: # 60% Template expansion
+                rule = random.choice(all_rules)
+                tmpl = random.choice(CAUSAL_TEMPLATES)
+                inst, out = format_template(tmpl, rule['cause'], rule['effect'], rule.get('strength', 0.8))
+            elif strategy < 0.85: # 25% Causal chains
+                # Fast chain picking
+                c1 = random.choice(list(rules_by_cause.keys()))
+                r1 = random.choice(rules_by_cause[c1])
+                e1 = r1['effect'].lower()
+                if e1 in rules_by_cause:
+                    r2 = random.choice(rules_by_cause[e1])
+                    inst = f"Trace the causal chain from: {r1['cause']}"
+                    out = f"Phase 1: {r1['cause']} leads to {r1['effect']}. Phase 2: {r1['effect']} results in {r2['effect']}. Final: {r2['effect']}."
+                else:
+                    inst, out = format_template(CAUSAL_TEMPLATES[0], r1['cause'], r1['effect'], 0.8)
+            else: # 15% Comparison/Negation
+                rule = random.choice(all_rules)
+                inst = f"What if {rule['cause']} does NOT happen?"
+                out = f"If {rule['cause']} is absent, the expected effect ({rule['effect']}) is unlikely to occur."
+
+            if inst and out:
+                out_f.write(json.dumps({"instruction": inst, "input": "", "output": out}, ensure_ascii=False) + '\n')
                 entries_written += 1
-                if entries_written % BATCH == 0:
-                    print(f"    {entries_written:,} / {target_count:,} ({entries_written*100/target_count:.1f}%)")
+                
+            if entries_written % BATCH_SIZE == 0:
+                print(f"  ... {entries_written:,} / {target_count:,} ({entries_written*100/target_count:.1f}%)")
     
     elapsed = time.time() - start
-    try:
-        size_mb = os.path.getsize(output_file) / (1024*1024)
-    except:
-        size_mb = 0
-    print(f"\n✅ Done! {entries_written:,} entries written")
-    print(f"   File: {output_file}")
-    print(f"   Size: {size_mb:.1f} MB")
-    print(f"   Time: {elapsed:.1f}s")
+    print(f"\n✅ SUCCESS! {entries_written:,} entries written in {elapsed:.1f}s.")
     return entries_written
 
 if __name__ == "__main__":
