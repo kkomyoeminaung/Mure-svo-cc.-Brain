@@ -5,21 +5,24 @@ import { MyanmarProcessor } from '../utils/myanmar';
 import fs from 'fs';
 import path from 'path';
 import AdmZip from 'adm-zip';
+import Database from 'better-sqlite3';
+import * as fuzz from 'fuzzball';
 
 export class SVOCCReasoner {
   private parser = new SVOCCParser();
   private conscience = new MyoMinAungConscience();
-  private causalMemory: CausalKnowledge[] = [];
+  private db: Database.Database;
+  private causalMemory: CausalKnowledge[] = []; // Still keeping in-memory cache for ultra-fast lookup
   private causalIndex: Map<string, CausalKnowledge[]> = new Map();
+  private syllableIndex: Map<string, Set<number>> = new Map();
   private svoMemory: SVOCCFrame[] = [];
   private conversationHistory: ConversationTurn[] = [];
+  private currentTopic: string | null = null;
   private knowledgeGraph: Map<string, string[]> = new Map();
   private dreamsProcessed = 0;
   private persistenceDir: string | null = null;
   private cachedGraph: any = null;
   private graphDirty = true;
-  private lastSaveTime = 0;
-  private saveTimeout: any = null;
 
   constructor(persistenceDir?: string) {
     const colabPath = '/content/drive/MyDrive/svo cc brain';
@@ -35,15 +38,46 @@ export class SVOCCReasoner {
 
     this.ensureDirectoryStructure();
     
-    // Auto-Extraction logic for ZIP exports dropped in the folder
-    this.autoExtractZipExports();
+    // Initialize SQLite
+    const dbPath = path.join(this.persistenceDir!, 'mure_rules.db');
+    this.db = new Database(dbPath);
+    this.initDatabase();
 
-    const rulesPath = path.join(this.persistenceDir, 'rules.json');
-    if (fs.existsSync(rulesPath)) {
-      this.loadFromDisk();
-    } else {
-      this.bootstrap();
-    }
+    // Auto-Extraction logic for ZIP exports
+    this.autoExtractZipExports();
+    
+    // Load data
+    this.loadFromDB();
+  }
+
+  private initDatabase() {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS causal_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cause TEXT NOT NULL,
+        effect TEXT NOT NULL,
+        strength REAL DEFAULT 0.8,
+        confidence REAL DEFAULT 1.0,
+        occurrences INTEGER DEFAULT 1,
+        source TEXT DEFAULT 'seed',
+        timestamp INTEGER,
+        UNIQUE(cause, effect)
+      );
+      CREATE TABLE IF NOT EXISTS memory_svo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        data TEXT NOT NULL,
+        timestamp INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS conversation_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_message TEXT NOT NULL,
+        brain_response TEXT NOT NULL,
+        frame_data TEXT NOT NULL,
+        timestamp INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_cause ON causal_rules(cause);
+      CREATE INDEX IF NOT EXISTS idx_effect ON causal_rules(effect);
+    `);
   }
 
   private autoExtractZipExports() {
@@ -80,10 +114,21 @@ export class SVOCCReasoner {
 
   private rebuildIndex() {
     this.causalIndex.clear();
-    this.causalMemory.forEach(k => {
+    this.syllableIndex.clear();
+    this.causalMemory.forEach((k, idx) => {
       const existing = this.causalIndex.get(k.cause) || [];
       existing.push(k);
       this.causalIndex.set(k.cause, existing);
+
+      // Syllable Index for Myanmar
+      if (MyanmarProcessor.isMyanmar(k.cause)) {
+        const syllables = MyanmarProcessor.segment(k.cause);
+        syllables.forEach(s => {
+          const set = this.syllableIndex.get(s) || new Set();
+          set.add(idx);
+          this.syllableIndex.set(s, set);
+        });
+      }
     });
   }
 
@@ -98,141 +143,63 @@ export class SVOCCReasoner {
     });
   }
 
-  private loadFromDisk() {
-    if (!this.persistenceDir) {
-      this.bootstrap();
-      return;
-    }
-    
-    const rulesPath = path.join(this.persistenceDir, 'rules.json');
-    const graphPath = path.join(this.persistenceDir, 'knowledge_graph.json');
-    const memoriesPath = path.join(this.persistenceDir, 'memories.json');
-    const contextPath = path.join(this.persistenceDir, 'context.json');
-
+  private loadFromDB() {
     try {
-      if (fs.existsSync(rulesPath)) {
-        const rulesData = JSON.parse(fs.readFileSync(rulesPath, 'utf-8'));
-        this.svoMemory = rulesData.svoMemory || [];
-        
-        if (rulesData.chunked) {
-          this.causalMemory = [];
-          const files = fs.readdirSync(this.persistenceDir).filter(f => f.startsWith('causal_memory_'));
-          for (let i = 0; i < files.length; i++) {
-            const chunkPath = path.join(this.persistenceDir, `causal_memory_${i}.json`);
-            if (fs.existsSync(chunkPath)) {
-              const chunk = JSON.parse(fs.readFileSync(chunkPath, 'utf-8'));
-              for(const item of chunk) {
-                this.causalMemory.push(item);
-              }
-            }
-          }
-        } else {
-          this.causalMemory = rulesData.causalMemory || [];
-        }
-
-        if (rulesData.knowledgeGraph) {
-          this.knowledgeGraph = new Map(rulesData.knowledgeGraph);
-        }
-        this.rebuildIndex();
-      }
-
-      if (fs.existsSync(graphPath)) {
-        const graphData = JSON.parse(fs.readFileSync(graphPath, 'utf-8'));
-        if (graphData.edges) {
-          this.knowledgeGraph = new Map(graphData.edges);
-        }
-      }
+      const rows = this.db.prepare('SELECT * FROM causal_rules').all() as any[];
+      this.causalMemory = rows.map(r => ({
+        cause: r.cause,
+        effect: r.effect,
+        strength: r.strength,
+        confidence: r.confidence,
+        occurrences: r.occurrences,
+        source: r.source,
+        timestamp: r.timestamp
+      }));
       
-      if (fs.existsSync(memoriesPath)) {
-        this.conversationHistory = JSON.parse(fs.readFileSync(memoriesPath, 'utf-8'));
-      } else if (fs.existsSync(contextPath)) {
-        this.conversationHistory = JSON.parse(fs.readFileSync(contextPath, 'utf-8'));
-      }
+      const svoRows = this.db.prepare('SELECT * FROM memory_svo ORDER BY timestamp DESC LIMIT 1000').all() as any[];
+      this.svoMemory = svoRows.map(r => JSON.parse(r.data));
 
-      if (this.causalMemory.length < 100) {
+      const chatRows = this.db.prepare('SELECT * FROM conversation_history ORDER BY timestamp DESC LIMIT 20').all() as any[];
+      this.conversationHistory = chatRows.map(r => ({
+        userMessage: r.user_message,
+        brainResponse: r.brain_response,
+        frame: JSON.parse(r.frame_data),
+        timestamp: r.timestamp
+      })).reverse();
+
+      this.rebuildIndex();
+      
+      if (this.causalMemory.length === 0) {
         this.bootstrap();
       }
       
-      console.log(`📡 MURE: Knowledge Base loaded (${this.causalMemory.length} rules)`);
+      console.log(`📡 MURE Ultimate: Knowledge Base loaded from SQLite (${this.causalMemory.length} rules)`);
     } catch (e) {
-      console.error("⚠️ MURE: Failed to load brain from disk:", e);
+      console.error("⚠️ MURE: Failed to load from SQLite:", e);
       this.bootstrap();
     }
   }
 
-  private async saveToDisk(force: boolean = false) {
-    if (!this.persistenceDir) return;
+  private saveToDB(knowledge: CausalKnowledge) {
+    const stmt = this.db.prepare(`
+      INSERT INTO causal_rules (cause, effect, strength, confidence, occurrences, source, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cause, effect) DO UPDATE SET
+        strength = (strength + EXCLUDED.strength) / 2,
+        confidence = (confidence + EXCLUDED.confidence) / 2,
+        occurrences = occurrences + 1,
+        timestamp = EXCLUDED.timestamp
+    `);
     
-    // Throttling: Don't save more than once every 30 seconds unless forced
-    const now = Date.now();
-    if (!force && now - this.lastSaveTime < 30000) {
-      if (!this.saveTimeout) {
-        this.saveTimeout = setTimeout(() => {
-          this.saveTimeout = null;
-          this.saveToDisk();
-        }, 30000 - (now - this.lastSaveTime));
-      }
-      return;
-    }
-    this.lastSaveTime = now;
-    if (this.saveTimeout) {
-      clearTimeout(this.saveTimeout);
-      this.saveTimeout = null;
-    }
-
-    try {
-      const rulesPath = path.join(this.persistenceDir, 'rules.json');
-      const graphPath = path.join(this.persistenceDir, 'knowledge_graph.json');
-      const memoriesPath = path.join(this.persistenceDir, 'memories.json');
-      const configPath = path.join(this.persistenceDir, 'config.json');
-
-      const indent = this.causalMemory.length > 10000 ? 0 : 2;
-
-      // 1. Save Main Rules
-      const rulesData = JSON.stringify({
-        chunked: true,
-        svoMemory: this.svoMemory,
-        signature: this.conscience.getSignature(),
-        lastUpdated: new Date().toISOString()
-      }, null, indent);
-      await fs.promises.writeFile(rulesPath, rulesData);
-
-      // Save causalMemory chunks (500k per chunk approx 60-70MB string)
-      const chunkSize = 500000;
-      const oldChunks = fs.readdirSync(this.persistenceDir).filter(f => f.startsWith('causal_memory_'));
-      for (const file of oldChunks) {
-        fs.unlinkSync(path.join(this.persistenceDir, file));
-      }
-      
-      const totalChunks = Math.ceil(this.causalMemory.length / chunkSize);
-      for (let i = 0; i < totalChunks; i++) {
-        const chunk = this.causalMemory.slice(i * chunkSize, (i + 1) * chunkSize);
-        await fs.promises.writeFile(path.join(this.persistenceDir, `causal_memory_${i}.json`), JSON.stringify(chunk));
-      }
-
-      // 2. Save Knowledge Graph separately
-      await fs.promises.writeFile(graphPath, JSON.stringify({
-        nodes: Array.from(this.knowledgeGraph.keys()),
-        edges: Array.from(this.knowledgeGraph.entries())
-      }, null, indent));
-
-      // 3. Save Memories (Episodic)
-      await fs.promises.writeFile(memoriesPath, JSON.stringify(this.conversationHistory, null, 2));
-
-      // 4. Save Config & Stats
-      await fs.promises.writeFile(configPath, JSON.stringify({
-        version: "5.0",
-        brainSignature: this.conscience.getSignature(),
-        unitCount: this.causalMemory.length,
-        lastSync: new Date().toISOString(),
-        primingComplete: true,
-        connectivityScore: this.knowledgeGraph.size / (this.causalMemory.length || 1)
-      }, null, 2));
-      
-      console.log(`💾 MURE: Universal Sync ${this.causalMemory.length} units to Drive.`);
-    } catch (e) {
-      console.error("⚠️ MURE: Sync failed", e);
-    }
+    stmt.run(
+      knowledge.cause, 
+      knowledge.effect, 
+      knowledge.strength, 
+      knowledge.confidence, 
+      knowledge.occurrences, 
+      knowledge.source, 
+      knowledge.timestamp
+    );
   }
 
   public async triggerMassiveBootstrap() {
@@ -244,8 +211,8 @@ export class SVOCCReasoner {
       return currentStats;
     }
 
-    // We do ONE batch of 100k per request to avoid HTTP timeouts.
-    const batchSize = 100000;
+    // We do ONE batch of 50k per request to avoid HTTP timeouts and memory spikes.
+    const batchSize = 50000;
     console.log(`📦 Priming Batch: Synthesizing ${batchSize} units (Total: ${this.causalMemory.length})...`);
     await this.bootstrap(batchSize);
     
@@ -279,6 +246,7 @@ export class SVOCCReasoner {
       if (existingIdx && existingIdx.some(k => k.effect === effectLower)) return;
 
       this.causalMemory.push(knowledge);
+      this.saveToDB(knowledge);
       
       const existing = this.causalIndex.get(causeLower) || [];
       existing.push(knowledge);
@@ -367,16 +335,17 @@ export class SVOCCReasoner {
       for(let i=0; i<batchSize; i++) {
         const globalIdx = startIdx + i;
         const d = domains[globalIdx % domains.length];
+        // Increased variety by using different combinations
         const causeVar = d.causes[Math.floor(globalIdx / domains.length) % d.causes.length];
-        const effectVar = d.effects[Math.floor(globalIdx / domains.length) % d.effects.length];
+        const effectVar = d.effects[Math.floor((globalIdx + 7) / domains.length) % d.effects.length];
         
-        add(`${causeVar} (Vector-${globalIdx})`, `${effectVar} (Resolution-${globalIdx})`, d.strength);
+        const entropy = globalIdx % 1000;
+        add(`${causeVar} (Vector-${globalIdx})`, `${effectVar} (Resolution-${entropy})`, d.strength);
         
-        if (i > 0 && i % 25000 === 0) await new Promise(r => setImmediate(r));
+        if (i > 0 && i % 10000 === 0) await new Promise(r => setImmediate(r));
       }
     }
 
-    await this.saveToDisk(true); // Force save after bootstrap
     console.log(`✅ Priming Complete: Brain online with ${this.causalMemory.length} logic units.`);
   }
 
@@ -395,10 +364,19 @@ export class SVOCCReasoner {
     try {
       const mode = Math.random();
 
-      // Continuous Learning Pruning: Remove weak connections during dream state
+      // Protected: Users rules, Bootstrap, and Auto-learned text are never pruned here unless extremely weak
       if (Math.random() < 0.05) {
         const initialCount = this.causalMemory.length;
-        this.causalMemory = this.causalMemory.filter(r => r.strength >= 0.3 || r.occurrences > 5);
+        this.causalMemory = this.causalMemory.filter(r => 
+          r.source === 'user' || 
+          r.source === 'bootstrap' || 
+          r.source === 'auto' ||
+          r.source === 'collaborative_learning' ||
+          r.source === 'synthetic_pretraining' ||
+          r.source === 'web_crawler' ||
+          r.strength >= 0.25 || 
+          r.occurrences > 3
+        );
         if (this.causalMemory.length < initialCount) {
           this.rebuildIndex();
           this.graphDirty = true;
@@ -415,9 +393,22 @@ export class SVOCCReasoner {
         };
       }
 
+      // Transitive Learning / Creative Synthesis & Conflict Resolution
       if (mode < 0.7) {
-        // Mode 2: Transitive Learning / Creative Synthesis
         const rule1 = this.causalMemory[Math.floor(Math.random() * this.causalMemory.length)];
+        if (!rule1) return { dream: "Resting", connection: "Knowledge void" };
+
+        const conflicts = this.causalIndex.get(rule1.cause)?.filter(r => r.effect !== rule1.effect);
+        if (conflicts && conflicts.length > 0) {
+           const worst = conflicts.sort((a,b) => a.strength - b.strength)[0];
+           if (rule1.strength > worst.strength + 0.2) {
+             // Resolve conflict by pruning the weaker one
+             this.causalMemory = this.causalMemory.filter(r => r !== worst);
+             this.rebuildIndex();
+             return { dream: "Conflict Resolution", connection: `Resolved contradiction for [${rule1.cause}]. Kept stronger effect: [${rule1.effect}].` };
+           }
+        }
+
         const candidates = this.causalIndex.get(rule1.effect);
         const rule2 = candidates ? candidates[Math.floor(Math.random() * candidates.length)] : null;
         
@@ -470,10 +461,14 @@ export class SVOCCReasoner {
         rule.strength = Math.max(0.1, rule.strength - 0.15);
         rule.confidence = Math.max(0.1, rule.confidence - 0.1);
       }
-      this.saveToDisk();
+      this.saveToDB(rule);
     }
     
     this.lastEvaluation = null;
+  }
+
+  public add_rule_to_db(knowledge: CausalKnowledge) {
+    this.saveToDB(knowledge);
   }
 
   public addCausalKnowledge(cause: string, effect: string, strength: number, confidence: number = 0.8, source: string = "user") {
@@ -488,6 +483,7 @@ export class SVOCCReasoner {
       existing.strength = (existing.strength + strength) / 2;
       existing.confidence = (existing.confidence + confidence) / 2;
       existing.occurrences += 1;
+      this.saveToDB(existing);
     } else {
       const knowledge: CausalKnowledge = {
         cause: causeLower,
@@ -499,6 +495,7 @@ export class SVOCCReasoner {
         timestamp: Date.now()
       };
       this.causalMemory.push(knowledge);
+      this.saveToDB(knowledge);
       
       const effects = this.knowledgeGraph.get(causeLower) || [];
       if (!effects.includes(effectLower)) {
@@ -510,9 +507,19 @@ export class SVOCCReasoner {
       // Update index
       rulesAtCause.push(knowledge);
       this.causalIndex.set(causeLower, rulesAtCause);
+
+      // Syllable Index Update for Myanmar
+      if (MyanmarProcessor.isMyanmar(causeLower)) {
+        const syllables = MyanmarProcessor.segment(causeLower);
+        const idx = this.causalMemory.length - 1;
+        syllables.forEach(s => {
+          const set = this.syllableIndex.get(s) || new Set();
+          set.add(idx);
+          this.syllableIndex.set(s, set);
+        });
+      }
       
       // Save for explicit user or external learning
-      this.saveToDisk();
     }
   }
 
@@ -540,6 +547,7 @@ export class SVOCCReasoner {
             const best = matches[0]; // findCausalMatches already sorts by strength/overlap
             frame.effect = best.effect;
             frame.causalStrength = best.strength;
+            frame.chain = this.getDetailedChain(frame.cause, 3);
             
             // Prepare for reinforcement learning
             this.lastEvaluation = { cause: frame.cause, effect: best.effect, strength: best.strength };
@@ -550,6 +558,7 @@ export class SVOCCReasoner {
           if (best) {
              frame.cause = best.cause;
              frame.causalStrength = best.strength;
+             frame.chain = this.getDetailedChain(best.cause, 3);
           }
         }
     }
@@ -613,14 +622,23 @@ export class SVOCCReasoner {
     const evalResult = this.conscience.evaluateAction('respond', userMessage);
     const finalResponse = evalResult.blocked ? evalResult.moralNote : brainResponse;
 
-    this.conversationHistory.push({
+    const turn: ConversationTurn = {
       userMessage,
       brainResponse: finalResponse,
       frame,
       timestamp: Date.now()
-    });
+    };
+
+    this.conversationHistory.push(turn);
     
-    if (this.conversationHistory.length > 10) {
+    // Save Turn to DB
+    const stmt = this.db.prepare(`
+      INSERT INTO conversation_history (user_message, brain_response, frame_data, timestamp)
+      VALUES (?, ?, ?, ?)
+    `);
+    stmt.run(turn.userMessage, turn.brainResponse, JSON.stringify(turn.frame), turn.timestamp);
+
+    if (this.conversationHistory.length > 20) {
       this.conversationHistory.shift();
     }
   }
@@ -669,6 +687,14 @@ export class SVOCCReasoner {
     return count;
   }
 
+  public getExportMetadata() {
+    return {
+      svoMemory: this.svoMemory,
+      conversationHistory: this.conversationHistory,
+      signature: this.conscience.getSignature()
+    };
+  }
+
   public exportBrain() {
     return {
       causalMemory: this.causalMemory,
@@ -698,7 +724,12 @@ export class SVOCCReasoner {
     if (data.svoMemory) this.svoMemory = data.svoMemory;
     if (data.knowledgeGraph) this.knowledgeGraph = new Map(data.knowledgeGraph);
     if (data.conversationHistory) this.conversationHistory = data.conversationHistory;
-    this.saveToDisk();
+    
+    // Legacy sync
+    const transaction = this.db.transaction((rules: CausalKnowledge[]) => {
+      rules.forEach(k => this.saveToDB(k));
+    });
+    transaction(this.causalMemory);
   }
 
   public getGraphData(): { nodes: { id: string }[], links: { source: string, target: string, value: number }[] } {
@@ -735,63 +766,66 @@ export class SVOCCReasoner {
     const causeLower = cause.toLowerCase().trim();
     const isMyanmar = MyanmarProcessor.isMyanmar(causeLower);
 
-    // 1. Use index for O(1) primary lookup (Direct Match)
+    // 1. Direct Memory Match (High Priority)
     const directResults = this.causalIndex.get(causeLower) || [];
     if (directResults.length > 0) return directResults.sort((a, b) => b.strength - a.strength);
     
-    // Word/Syllable overlap check
-    const querySegments = isMyanmar 
-      ? MyanmarProcessor.segment(causeLower)
-      : causeLower.split(/\s+/).filter(w => w.length > 2);
+    // 2. Hybrid Search Logic (60% Fuzzy + 40% Overlap)
+    const candidates: { rule: CausalKnowledge, score: number }[] = [];
     
-    let results: CausalKnowledge[] = [];
+    // Get all candidate causes
+    const allCauses = Array.from(this.causalIndex.keys());
     
-    // 2. Segment-based candidates from Index (High Efficiency)
-    for (const segment of querySegments) {
-        const segmentMatches = this.causalIndex.get(segment);
-        if (segmentMatches) {
-            results.push(...segmentMatches);
+    // Fuzzy matching using fuzzball
+    const fuzzyMatches = fuzz.extract(causeLower, allCauses, { scorer: fuzz.partial_ratio, limit: 100 });
+    
+    for (const match of fuzzyMatches) {
+        const matchingCause = match[0];
+        const fuzzyScore = match[1] / 100;
+        
+        // Semantic Overlap Score
+        const queryWords = isMyanmar ? MyanmarProcessor.segment(causeLower) : causeLower.split(/\s+/).filter(w => w.length > 2);
+        const ruleWords = isMyanmar ? MyanmarProcessor.segment(matchingCause) : matchingCause.split(/\s+/).filter(w => w.length > 2);
+        
+        const overlapCount = queryWords.filter(w => ruleWords.includes(w)).length;
+        const overlapScore = queryWords.length > 0 ? overlapCount / Math.max(queryWords.length, ruleWords.length) : 0;
+        
+        const hybridScore = (fuzzyScore * 0.6) + (overlapScore * 0.4);
+        
+        if (hybridScore > 0.6) {
+            const rules = this.causalIndex.get(matchingCause) || [];
+            rules.forEach(r => {
+                candidates.push({ rule: r, score: hybridScore * r.strength });
+            });
         }
-        if (results.length > 1000) break;
     }
 
-    // 3. Sub-string search fallback for smaller KBs or if segment lookup failed to yield enough
-    if (results.length < 10 && this.causalMemory.length < 200000) {
-      const fallback = this.causalMemory.filter(k => {
-        // High quality match: Check if cause contains or is contained in query
-        if (k.cause.includes(causeLower) || causeLower.includes(k.cause)) return true;
-        
-        // Causal segment match (Myanmar specific)
-        if (isMyanmar) {
-          const ruleSegments = MyanmarProcessor.segment(k.cause);
-          let matchesCount = 0;
-          for (const seg of querySegments) {
-            if (ruleSegments.includes(seg)) matchesCount++;
-          }
-          const minMatches = Math.max(1, Math.ceil(Math.min(querySegments.length, ruleSegments.length) * 0.6));
-          return matchesCount >= minMatches;
-        }
-        return false;
-      });
-      results.push(...fallback);
-    }
-    
-    // 4. Score and sort
-    if (results.length > 0) {
-      const uniqueResults = Array.from(new Set(results));
-      return uniqueResults.sort((a, b) => {
-        // Boost by exact segment matches
-        const aSegments = isMyanmar ? MyanmarProcessor.segment(a.cause) : a.cause.split(/\s+/);
-        const bSegments = isMyanmar ? MyanmarProcessor.segment(b.cause) : b.cause.split(/\s+/);
-        const aOverlap = querySegments.filter(w => aSegments.includes(w)).length;
-        const bOverlap = querySegments.filter(w => bSegments.includes(w)).length;
-        
-        if (aOverlap !== bOverlap) return bOverlap - aOverlap;
-        return b.strength - a.strength;
-      });
+    if (candidates.length > 0) {
+        return candidates
+            .sort((a, b) => b.score - a.score)
+            .map(c => c.rule)
+            .slice(0, 20);
     }
     
     return [];
+  }
+
+  public getDetailedChain(start: string, maxDepth = 3): [string, string, number][] {
+    const chain: [string, string, number][] = [];
+    let current = start.toLowerCase().trim();
+
+    for (let i = 0; i < maxDepth; i++) {
+      const candidates = this.causalIndex.get(current);
+      if (candidates && candidates.length > 0) {
+        // Pick the strongest link
+        const best = candidates.reduce((prev, curr) => (curr.strength > prev.strength ? curr : prev));
+        chain.push([current, best.effect, best.strength]);
+        current = best.effect;
+      } else {
+        break;
+      }
+    }
+    return chain;
   }
 
   public getCausalChain(start: string, maxDepth = 3): string[] {

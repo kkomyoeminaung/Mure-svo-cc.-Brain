@@ -11,6 +11,7 @@ export interface SVOCCFrame {
   isQuestion: boolean;
   rawText: string;
   isContradiction?: boolean;
+  chain?: [string, string, number][];
 }
 
 export interface CausalKnowledge {

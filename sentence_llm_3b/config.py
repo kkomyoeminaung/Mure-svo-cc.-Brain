@@ -3,6 +3,7 @@ Configuration for Sentence-based LLM 3B
 """
 
 import os
+import torch
 from dataclasses import dataclass
 
 @dataclass
@@ -47,7 +48,7 @@ class DataConfig:
 @dataclass
 class TrainingConfig:
     """Training configuration"""
-    device: str = "cuda" if os.environ.get('CUDA_VISIBLE_DEVICES') else "cpu"
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
     num_workers: int = 4
     checkpoint_dir: str = "./checkpoints"
     log_dir: str = "./logs"
@@ -63,15 +64,15 @@ training_cfg = TrainingConfig()
 
 
 def get_model_size():
-    """Calculate model size in billions of parameters"""
+    """Calculate model size in billions of parameters (approximate)"""
     atomic_params = model_cfg.atomic_embed_dim * model_cfg.num_atomic_nodes
     sentence_params = model_cfg.sentence_embed_dim * model_cfg.num_sentence_nodes
     chain_params = model_cfg.chain_embed_dim * model_cfg.num_chain_nodes
-    transformer_params = (model_cfg.num_encoder_layers + model_cfg.num_decoder_layers) * (
-        model_cfg.sentence_embed_dim * model_cfg.sentence_embed_dim * 4
-        + model_cfg.sentence_embed_dim * model_cfg.sentence_embed_dim * 3
-        + model_cfg.sentence_embed_dim * model_cfg.num_attention_heads
-    ) * 2
+    
+    # Transformer parameters approximation: 12 * layers * d_model^2
+    d = model_cfg.sentence_embed_dim
+    layers = model_cfg.num_encoder_layers + model_cfg.num_decoder_layers
+    transformer_params = layers * (12 * d * d)
     
     total = atomic_params + sentence_params + chain_params + transformer_params
     return total / 1e9

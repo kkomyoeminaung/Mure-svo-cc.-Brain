@@ -1,4 +1,4 @@
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import torch
 
 class PRDLLMBrain:
@@ -6,17 +6,24 @@ class PRDLLMBrain:
     
     def __init__(self):
         self.tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B")
-        self.model = AutoModelForCausalLM.from_pretrained("Qwen/Qwen2.5-7B", device_map="auto", load_in_4bit=True)
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True,
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            "Qwen/Qwen2.5-7B", 
+            device_map="auto", 
+            quantization_config=bnb_config
+        )
 
     def chat_with_collaboration(self, prompt, mure_context):
-        input_text = f"{self.MURE_SYSTEM_PROMPT}\nContext: {mure_context}\nQuery: {prompt}"
-        return self.generate(input_text, mure_context)
+        # BUG-PRD-04 Fix: Simplified pass-through to avoid double wrapping
+        return self.generate(prompt, mure_context)
     
     def generate(self, prompt, mure_context):
-        # Incorporate context properly if not already in prompt
-        # Force a slightly more independent generation if context is weak
-        full_prompt = f"{self.MURE_SYSTEM_PROMPT}\nContext: {mure_context}\nQuery: {prompt}\nIf the context is insufficient, use your broad internal knowledge."
+        full_prompt = f"{self.MURE_SYSTEM_PROMPT}\nContext: {mure_context}\nQuery: {prompt}\nIf the context is insufficient, use your broad internal knowledge.\nResponse:"
         inputs = self.tokenizer(full_prompt, return_tensors="pt").to("cuda")
         outputs = self.model.generate(**inputs, max_new_tokens=300, do_sample=True, temperature=0.7)
-        # Decode only the generated part to avoid returning the prompt
         return self.tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
