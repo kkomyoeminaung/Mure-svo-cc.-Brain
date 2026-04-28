@@ -35,7 +35,7 @@ async function startServer() {
   // API Routes
     app.post('/api/chat', async (req, res) => {
       try {
-        const { message } = req.body;
+        const { message, settings } = req.body;
         if (!message) return res.status(400).json({ error: 'Message is required' });
 
         // 1. Mutual Learning: Check if user is teaching a new causal link
@@ -48,7 +48,7 @@ async function startServer() {
         }
 
         // 2. Symbolic Reasoning (MURE)
-        const result = reasoner.reason(message);
+        const result = reasoner.reason(message, settings);
         const confidence = result.calibratedConfidence || result.causalStrength;
         
         const finalReply = speaker.generateResponse(message, result, reasoner, confidence);

@@ -29,14 +29,17 @@ export class MureApiService {
 
   async healthCheck(): Promise<boolean> {
     try {
-      const res = await fetch(`${this.backendUrl}/health`);
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 1000); // 1 second timeout
+      const res = await fetch(`${this.backendUrl}/health`, { signal: controller.signal });
+      clearTimeout(id);
       return res.ok;
     } catch {
       return false;
     }
   }
 
-  async chat(message: string): Promise<any> {
+  async chat(message: string, settings?: any): Promise<any> {
     try {
       const isOnline = await this.healthCheck();
       if (!isOnline) {
@@ -46,7 +49,7 @@ export class MureApiService {
       const res = await fetch(`${this.backendUrl}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message })
+        body: JSON.stringify({ message, settings })
       });
       if (!res.ok) throw new Error('API Error');
       const data = await res.json();
@@ -57,7 +60,7 @@ export class MureApiService {
       const fallbackRes = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message })
+        body: JSON.stringify({ message, settings })
       });
       if (!fallbackRes.ok) throw new Error("Local fallback failed.");
       return fallbackRes.json();

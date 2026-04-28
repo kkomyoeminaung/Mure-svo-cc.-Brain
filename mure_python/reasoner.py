@@ -17,20 +17,26 @@ class MyanmarMURE:
     def load_rules(self):
         if os.path.exists(self.rules_path):
             with open(self.rules_path, 'r', encoding='utf-8') as f:
-                self.causal_memory = json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict):
+                    self.causal_memory = data.get('causalMemory', [])
+                else:
+                    self.causal_memory = data
             self.rebuild_index()
 
     def rebuild_index(self):
         self.causal_index = {}
         for rule in self.causal_memory:
-            cause = rule.get('cause', '').lower()
+            cause = str(rule.get('cause', '')).lower()
             if cause not in self.causal_index:
                 self.causal_index[cause] = []
             self.causal_index[cause].append(rule)
 
     def save_rules(self):
         with open(self.rules_path, 'w', encoding='utf-8') as f:
-            json.dump(self.causal_memory, f, indent=2, ensure_ascii=False)
+            # We preserve the list format for causal_memory but ensure it's written as a dict if that's the standard
+            output = {"causalMemory": self.causal_memory}
+            json.dump(output, f, indent=2, ensure_ascii=False)
 
     def find_matches(self, cause: str) -> List[Dict]:
         cause_lower = cause.lower().strip()

@@ -70,6 +70,7 @@ export default function App() {
   const [dreams, setDreams] = useState<string[]>([]);
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [activeTab, setActiveTab] = useState<'chat' | 'graph' | 'memory'>('chat');
+  const [settings, setSettings] = useState({ rag: true, temperature: 0.7 });
   const [urlInput, setUrlInput] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isCrawling, setIsCrawling] = useState(false);
@@ -292,6 +293,14 @@ export default function App() {
     fetchGraph();
   };
 
+  const handleToggleSetting = (key: string) => {
+    setSettings(prev => ({ ...prev, [key]: !((prev as any)[key]) }));
+  };
+
+  const handleTemperatureChange = (val: number) => {
+    setSettings(prev => ({ ...prev, temperature: val }));
+  };
+
   const handleSend = async () => {
     if (!input.trim()) return;
 
@@ -379,7 +388,7 @@ export default function App() {
       }
 
       // SYMBOLIC REASONING LOOP (MURE API)
-      const data = await mureApi.chat(currentInput);
+      const data = await mureApi.chat(currentInput, settings);
       
       setMessages(prev => [...prev, { 
         role: 'brain', 
@@ -614,8 +623,9 @@ export default function App() {
               <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-white/10">
                 <div className="space-y-6">
                   <SettingsPanel 
-                    settings={{rag: true, temperature: 0.7}} 
-                    onToggle={(k: any) => console.log(k)} 
+                    settings={settings} 
+                    onToggle={handleToggleSetting}
+                    onTemperatureChange={handleTemperatureChange}
                     apiConfig={{ url: mureApiUrl, setUrl: setMureApiUrl }}
                   />
                   {/* System Stats */}

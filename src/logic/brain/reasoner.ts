@@ -315,6 +315,11 @@ export class SVOCCReasoner {
       addChain(['အတ္တကိုစွန့်', 'အနတ္တကိုမြင်', 'နိဗ္ဗာန်ကိုရည်မှန်း', 'ငြိမ်းချမ်းမှုကိုရရှိ', 'တရားအလင်းတိုင်'], 1.0);
       addChain(['စာဖတ်ခြင်း', 'ဗဟုသုတတိုးခြင်း', 'စဉ်းစားဉာဏ်ရင့်သန်ခြင်း', 'မှန်ကန်သောဆုံးဖြတ်ချက်', 'အောင်မြင်သောဘဝ'], 0.95);
       addChain(['နေပူထဲ အကြာကြီးနေတယ်', 'ခေါင်းမူးနောက်လာတယ်', 'ကိုယ်အပူချိန်တက်လာတယ်', 'ဖျားနာတယ်'], 0.9);
+      addChain(['မိုးရွာတယ်', 'လမ်းစိုတယ်', 'ကားတွေဖြည်းဖြည်းမောင်းတယ်', 'ယာဉ်ကြောပိတ်ဆို့တယ်'], 0.95);
+      addChain(['ရေနွေးဆူတယ်', 'ရေငွေ့တွေထွက်တယ်', 'အပူချိန် ၁၀၀ ဒီဂရီရောက်တယ်'], 0.98);
+      addChain(['မီးသတ်ကားအသံကြားတယ်', 'တစ်နေရာမှာ မီးလောင်နေတယ်', 'လူတွေပြေးကြတယ်'], 0.9);
+      addChain(['လေ့ကျင့်ခန်းလုပ်တယ်', 'ချွေးထွက်တယ်', 'ကိုယ်အလေးချိန်ကျတယ်', 'ကျန်းမာတယ်'], 0.95);
+      addChain(['ဆန်ကိုရေဆေးတယ်', 'အိုးထဲထည့်ချက်တယ်', 'ထမင်းဖြစ်လာတယ်'], 1.0);
       
       for(let i=0; i<20000; i++) {
           add(`မြန်မာ့ယဉ်ကျေးမှု အသိပညာ-${i}`, `လူမှုရေး တန်ဖိုးထားမှု-${i}`, 0.95);
@@ -377,6 +382,11 @@ export class SVOCCReasoner {
 
   private interactionCount = 0;
   private lastEvaluation: { cause: string, effect: string, strength: number } | null = null;
+  private config = { rag: true, temperature: 0.7 };
+
+  public updateConfig(settings: { rag?: boolean, temperature?: number }) {
+    this.config = { ...this.config, ...settings };
+  }
 
   public dream(): { dream: string; connection: string } {
     this.dreamsProcessed++;
@@ -506,8 +516,12 @@ export class SVOCCReasoner {
     }
   }
 
-  public reason(text: string): SVOCCFrame {
+  public reason(text: string, settings?: { rag?: boolean, temperature?: number }): SVOCCFrame {
     this.interactionCount++;
+    
+    if (settings) {
+      this.updateConfig(settings);
+    }
     
     // Auto-Dream every 20 interactions during operation
     if (this.interactionCount % 20 === 0) {
@@ -519,23 +533,25 @@ export class SVOCCReasoner {
     const frame = this.parser.parse(resolvedText);
 
     // 2. Perform reasoning
-    if (frame.cause) {
-      const matches = this.findCausalMatches(frame.cause);
-      if (matches.length > 0) {
-        const best = matches[0]; // findCausalMatches already sorts by strength/overlap
-        frame.effect = best.effect;
-        frame.causalStrength = best.strength;
-        
-        // Prepare for reinforcement learning
-        this.lastEvaluation = { cause: frame.cause, effect: best.effect, strength: best.strength };
-      }
-    } else if (frame.effect) {
-      const matches = this.findCausalMatches(frame.effect);
-      const best = matches.find(m => m.effect === frame.effect);
-      if (best) {
-         frame.cause = best.cause;
-         frame.causalStrength = best.strength;
-      }
+    if (this.config.rag) {
+        if (frame.cause) {
+          const matches = this.findCausalMatches(frame.cause);
+          if (matches.length > 0) {
+            const best = matches[0]; // findCausalMatches already sorts by strength/overlap
+            frame.effect = best.effect;
+            frame.causalStrength = best.strength;
+            
+            // Prepare for reinforcement learning
+            this.lastEvaluation = { cause: frame.cause, effect: best.effect, strength: best.strength };
+          }
+        } else if (frame.effect) {
+          const matches = this.findCausalMatches(frame.effect);
+          const best = matches.find(m => m.effect === frame.effect);
+          if (best) {
+             frame.cause = best.cause;
+             frame.causalStrength = best.strength;
+          }
+        }
     }
 
     // 3. Calibrate Confidence
@@ -724,33 +740,47 @@ export class SVOCCReasoner {
     if (directResults.length > 0) return directResults.sort((a, b) => b.strength - a.strength);
     
     // Word/Syllable overlap check
-    let results: CausalKnowledge[] = [];
     const querySegments = isMyanmar 
       ? MyanmarProcessor.segment(causeLower)
       : causeLower.split(/\s+/).filter(w => w.length > 2);
     
-    // Always try index first
+    let results: CausalKnowledge[] = [];
+    
+    // 2. Segment-based candidates from Index (High Efficiency)
     for (const segment of querySegments) {
-      const segmentMatches = this.causalIndex.get(segment);
-      if (segmentMatches) {
-        results.push(...segmentMatches);
-      }
-      if (results.length > 100) break; // Sufficient candidates
+        const segmentMatches = this.causalIndex.get(segment);
+        if (segmentMatches) {
+            results.push(...segmentMatches);
+        }
+        if (results.length > 1000) break;
+    }
+
+    // 3. Sub-string search fallback for smaller KBs or if segment lookup failed to yield enough
+    if (results.length < 10 && this.causalMemory.length < 200000) {
+      const fallback = this.causalMemory.filter(k => {
+        // High quality match: Check if cause contains or is contained in query
+        if (k.cause.includes(causeLower) || causeLower.includes(k.cause)) return true;
+        
+        // Causal segment match (Myanmar specific)
+        if (isMyanmar) {
+          const ruleSegments = MyanmarProcessor.segment(k.cause);
+          let matchesCount = 0;
+          for (const seg of querySegments) {
+            if (ruleSegments.includes(seg)) matchesCount++;
+          }
+          const minMatches = Math.max(1, Math.ceil(Math.min(querySegments.length, ruleSegments.length) * 0.6));
+          return matchesCount >= minMatches;
+        }
+        return false;
+      });
+      results.push(...fallback);
     }
     
-    // Fallback for smaller KBs
-    if (results.length === 0 && this.causalMemory.length < 50000) {
-      results = this.causalMemory.filter(k => 
-        k.cause.includes(causeLower) || 
-        causeLower.includes(k.cause)
-      );
-    }
-    
-    // 3. Score by overlap
+    // 4. Score and sort
     if (results.length > 0) {
       const uniqueResults = Array.from(new Set(results));
       return uniqueResults.sort((a, b) => {
-        // Boost score if multiple segments overlap
+        // Boost by exact segment matches
         const aSegments = isMyanmar ? MyanmarProcessor.segment(a.cause) : a.cause.split(/\s+/);
         const bSegments = isMyanmar ? MyanmarProcessor.segment(b.cause) : b.cause.split(/\s+/);
         const aOverlap = querySegments.filter(w => aSegments.includes(w)).length;

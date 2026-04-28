@@ -3,10 +3,12 @@ import { Settings, Moon, Sun, Zap, Database, Sliders, Globe, Download, FileCode2
 export default function SettingsPanel({ 
   settings, 
   onToggle,
+  onTemperatureChange,
   apiConfig
 }: { 
   settings: any, 
   onToggle: (key: string) => void,
+  onTemperatureChange?: (val: number) => void,
   apiConfig?: { url: string, setUrl: (url: string) => void }
 }) {
   return (
@@ -75,7 +77,7 @@ export default function SettingsPanel({
             type="range" 
             min="0" max="1" step="0.1"
             value={settings.temperature}
-            onChange={(e) => {}} // Implementation for update
+            onChange={(e) => onTemperatureChange?.(parseFloat(e.target.value))}
             className="w-full accent-cyan-500"
           />
         </div>

@@ -77,31 +77,42 @@ export class SVOCCParser {
   }
 
   private extractCausal(sentence: string): { cause: string; verb: string; effect: string } | null {
-    const words = sentence.toLowerCase().split(/\s+/);
+    const isMyanmar = MyanmarProcessor.isMyanmar(sentence);
     
-    for (let i = 0; i < words.length; i++) {
-        if (this.causalVerbs.has(words[i])) {
-            return {
-                cause: words.slice(0, i).join(' '),
-                verb: words[i],
-                effect: words.slice(i + 1).join(' ')
-            };
-        }
+    if (!isMyanmar) {
+      const words = sentence.toLowerCase().split(/\s+/);
+      for (let i = 0; i < words.length; i++) {
+          if (this.causalVerbs.has(words[i])) {
+              return {
+                  cause: words.slice(0, i).join(' '),
+                  verb: words[i],
+                  effect: words.slice(i + 1).join(' ')
+              };
+          }
+      }
     }
 
-    // Myanmar patterns
-    if (sentence.includes('ကြောင့်')) {
-        const parts = sentence.split('ကြောင့်');
-        if (parts.length === 2) {
-            return { cause: parts[0].trim(), verb: 'ကြောင့်', effect: parts[1].trim() };
-        }
-    }
+    // Myanmar specific patterns (more common for sentences with no spaces)
+    const myanmarParticles = [
+      { particle: 'ကြောင့်', fallbackVerb: 'ကြောင့်' },
+      { particle: 'လို့', fallbackVerb: 'လို့' },
+      { particle: 'ဖြစ်စေတယ်', fallbackVerb: 'ဖြစ်စေတယ်' },
+      { particle: 'ဖြစ်လို့', fallbackVerb: 'ဖြစ်လို့' }
+    ];
 
-    if (sentence.includes('လို့')) {
-        const parts = sentence.split('လို့');
-        if (parts.length === 2) {
-            return { cause: parts[0].trim(), verb: 'လို့', effect: parts[1].trim() };
+    for (const { particle, fallbackVerb } of myanmarParticles) {
+      if (sentence.includes(particle)) {
+        const parts = sentence.split(particle);
+        if (parts.length >= 2) {
+          // If multiple occurrences, we assume the direct cause-effect split is at the last one for "therefore" style
+          // or first for "because" style. Most Burmese causal particles are mid-sentence.
+          return { 
+            cause: parts[0].trim(), 
+            verb: fallbackVerb, 
+            effect: parts.slice(1).join(particle).trim() 
+          };
         }
+      }
     }
 
     return null;

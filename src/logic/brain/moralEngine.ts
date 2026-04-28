@@ -49,6 +49,6 @@ export class MyoMinAungConscience {
   }
 
   public getSignature(): string {
-    return "MURE-SVO v5.0 | MyoMinAung Unified Theory | Conscience Online";
+    return "MURE-SVO v7.0 | MyoMinAung Unified Theory | Conscience Online";
   }
 }

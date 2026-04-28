@@ -12,12 +12,16 @@ class MUREEngine:
     def load_rules(self):
         if os.path.exists(self.rules_path):
             with open(self.rules_path, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data.get('causalMemory', [])
+                return data
         return []
 
     def build_index(self):
         for rule in self.rules:
-            self.cause_index[rule['cause'].lower()].append(rule)
+            cause_val = str(rule.get('cause', '')).lower()
+            self.cause_index[cause_val].append(rule)
 
     def reason(self, query):
         query = query.lower()
@@ -55,7 +59,8 @@ class MUREEngine:
         try:
             os.makedirs(os.path.dirname(self.rules_path), exist_ok=True)
             with open(self.rules_path, 'w') as f:
-                json.dump(self.rules, f, indent=4)
+                output = {"causalMemory": self.rules}
+                json.dump(output, f, indent=4)
         except Exception as e:
             print(f"Error saving rules: {e}")
 

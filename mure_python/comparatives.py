@@ -18,7 +18,7 @@ class ComparativesHandler:
                     if c in text_lower:
                         comparator = c
                         break
-                elif any(w.endswith("er") for w in words):
+                if not comparator and any(w.endswith("er") for w in words):
                     for w in words:
                         if w.endswith("er") and w not in ["other", "another"]:
                             comparator = w
