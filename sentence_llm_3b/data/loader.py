@@ -1,3 +1,4 @@
+import random
 """
 Load and process MURE's rules.json into Level 1, 2, 3 nodes
 """
@@ -16,7 +17,8 @@ class RuleLoader:
     def load(self) -> List[Dict]:
         try:
             with open(self.rules_path, 'r', encoding='utf-8') as f:
-                all_rules = json.load(f)
+            data = json.load(f)
+        all_rules = data.get('causalMemory', []) if isinstance(data, dict) else data
             self.rules = all_rules[:self.max_rules]
             print(f"Loaded {len(self.rules):,} causal rules")
         except FileNotFoundError:
@@ -61,7 +63,6 @@ class SentenceNodeBuilder:
         
     def build_from_rules(self, rules: List[Dict]) -> List[Dict]:
         print("Building Level 2: Sentence Nodes...")
-        import random
         for i, rule in enumerate(tqdm(rules, desc="Building sentence nodes")):
             cause = rule.get('cause', '')
             effect = rule.get('effect', '')

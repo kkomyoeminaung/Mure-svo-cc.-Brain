@@ -48,6 +48,16 @@ export class MureApiService {
   }
 
   async chat(message: string, settings?: any): Promise<any> {
+    if (settings?.useAiStudio) {
+      // Force fallback to local TS reasoner for AI Studio modes
+      const fallbackRes = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, settings })
+      });
+      if (!fallbackRes.ok) throw new Error("Local fallback failed.");
+      return fallbackRes.json();
+    }
     try {
       const isOnline = await this.healthCheck();
       if (!isOnline) {

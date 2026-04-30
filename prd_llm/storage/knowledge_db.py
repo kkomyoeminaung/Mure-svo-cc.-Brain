@@ -1,3 +1,5 @@
+import os
+import json
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -39,8 +41,6 @@ class KnowledgeDB:
         return self.search(query)
 
     def save(self):
-        import os
-        import json
         os.makedirs(self.storage_path, exist_ok=True)
         faiss.write_index(self.index, os.path.join(self.storage_path, "index.faiss"))
         with open(os.path.join(self.storage_path, "docs.json"), "w") as f:
@@ -48,8 +48,6 @@ class KnowledgeDB:
         print(f"✅ KnowledgeDB saved: {self.index.ntotal} docs")
 
     def load(self):
-        import os
-        import json
         index_path = os.path.join(self.storage_path, "index.faiss")
         docs_path = os.path.join(self.storage_path, "docs.json")
         if os.path.exists(index_path) and os.path.exists(docs_path):

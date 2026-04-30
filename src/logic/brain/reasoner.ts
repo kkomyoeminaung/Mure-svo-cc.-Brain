@@ -27,8 +27,13 @@ export class SVOCCReasoner {
   constructor(persistenceDir?: string) {
     const colabPath = '/content/drive/MyDrive/svo cc brain';
     
+    // In AI Studio, we prioritize the local data directory for stability
+    const isAiStudio = process.env.NODE_ENV === 'production' || process.cwd().includes('applet');
+
     if (persistenceDir) {
       this.persistenceDir = persistenceDir;
+    } else if (isAiStudio) {
+      this.persistenceDir = path.join(process.cwd(), 'data', 'brain');
     } else if (fs.existsSync(colabPath)) {
       this.persistenceDir = colabPath;
       console.log(`📡 MURE: Dynamic Link established to Google Drive: ${colabPath}`);
@@ -40,6 +45,7 @@ export class SVOCCReasoner {
     
     // Initialize SQLite
     const dbPath = path.join(this.persistenceDir!, 'mure_rules.db');
+    console.log(`💾 MURE: Initializing database at ${dbPath}`);
     this.db = new Database(dbPath);
     this.initDatabase();
 
@@ -52,6 +58,8 @@ export class SVOCCReasoner {
 
   private initDatabase() {
     this.db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
       CREATE TABLE IF NOT EXISTS causal_rules (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cause TEXT NOT NULL,
@@ -94,17 +102,15 @@ export class SVOCCReasoner {
         })[0];
         
         const zipPath = path.join(this.persistenceDir, latestZip);
-        const rulesPath = path.join(this.persistenceDir, 'rules.json');
-        
-        // Extract if rules.json doesn't exist OR if ZIP is newer than rules.json
-        const shouldExtract = !fs.existsSync(rulesPath) || 
-                             fs.statSync(zipPath).mtime > fs.statSync(rulesPath).mtime;
+        // We only extract if the DB doesn't exist or is empty
+        const dbPath = path.join(this.persistenceDir, 'mure_rules.db');
+        const shouldExtract = !fs.existsSync(dbPath) || fs.statSync(dbPath).size < 1000;
 
         if (shouldExtract) {
-          console.log(`📦 MURE: Detecting new brain export ZIP: ${latestZip}`);
+          console.log(`📦 MURE: Detecting brain export ZIP for potential recovery: ${latestZip}`);
           const zip = new AdmZip(zipPath);
           zip.extractAllTo(this.persistenceDir, true);
-          console.log(`✅ MURE: Extraction complete. Brain updated from ZIP.`);
+          console.log(`✅ MURE: Extraction complete.`);
         }
       }
     } catch (e) {
@@ -128,6 +134,16 @@ export class SVOCCReasoner {
           set.add(idx);
           this.syllableIndex.set(s, set);
         });
+      }
+    });
+
+    // Rebuild Graph
+    this.knowledgeGraph.clear();
+    this.causalMemory.forEach(k => {
+      const effects = this.knowledgeGraph.get(k.cause) || [];
+      if (effects.length < 50 && !effects.includes(k.effect)) {
+        effects.push(k.effect);
+        this.knowledgeGraph.set(k.cause, effects);
       }
     });
   }
@@ -211,8 +227,8 @@ export class SVOCCReasoner {
       return currentStats;
     }
 
-    // We do ONE batch of 50k per request to avoid HTTP timeouts and memory spikes.
-    const batchSize = 50000;
+    // Increased to 100k to match UI expectations
+    const batchSize = 100000;
     console.log(`📦 Priming Batch: Synthesizing ${batchSize} units (Total: ${this.causalMemory.length})...`);
     await this.bootstrap(batchSize);
     
@@ -226,6 +242,21 @@ export class SVOCCReasoner {
     } else {
         console.log('🚀 Neural Brain Bootstrapping: Priming Core Knowledge...');
     }
+    
+    // Prepare transaction for high-speed insertion
+    const insertStmt = this.db.prepare(`
+      INSERT INTO causal_rules (cause, effect, strength, confidence, occurrences, source, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cause, effect) DO NOTHING
+    `);
+
+    const transaction = this.db.transaction((items: CausalKnowledge[]) => {
+      for (const k of items) {
+        insertStmt.run(k.cause, k.effect, k.strength, k.confidence, k.occurrences, k.source, k.timestamp);
+      }
+    });
+
+    const pendingInsert: CausalKnowledge[] = [];
     
     const add = (cause: string, effect: string, strength: number = 0.9, source = "bootstrap") => {
       const causeLower = cause.toLowerCase().trim();
@@ -246,7 +277,7 @@ export class SVOCCReasoner {
       if (existingIdx && existingIdx.some(k => k.effect === effectLower)) return;
 
       this.causalMemory.push(knowledge);
-      this.saveToDB(knowledge);
+      pendingInsert.push(knowledge);
       
       const existing = this.causalIndex.get(causeLower) || [];
       existing.push(knowledge);
@@ -342,8 +373,20 @@ export class SVOCCReasoner {
         const entropy = globalIdx % 1000;
         add(`${causeVar} (Vector-${globalIdx})`, `${effectVar} (Resolution-${entropy})`, d.strength);
         
-        if (i > 0 && i % 10000 === 0) await new Promise(r => setImmediate(r));
+        if (i > 0 && i % 10000 === 0) {
+          // Flush to DB periodically to keep memory manageable and show progress
+          if (pendingInsert.length > 0) {
+            transaction(pendingInsert);
+            pendingInsert.length = 0;
+          }
+          await new Promise(r => setImmediate(r));
+        }
       }
+    }
+
+    // Final Flush
+    if (pendingInsert.length > 0) {
+      transaction(pendingInsert);
     }
 
     console.log(`✅ Priming Complete: Brain online with ${this.causalMemory.length} logic units.`);

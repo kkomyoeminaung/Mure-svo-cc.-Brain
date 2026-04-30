@@ -70,7 +70,7 @@ export default function App() {
   const [dreams, setDreams] = useState<string[]>([]);
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [activeTab, setActiveTab] = useState<'chat' | 'graph' | 'memory'>('chat');
-  const [settings, setSettings] = useState({ rag: true, temperature: 0.7 });
+  const [settings, setSettings] = useState({ rag: true, temperature: 0.7, useAiStudio: false, aiStudioModel: 'mure_only' });
   const [urlInput, setUrlInput] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isCrawling, setIsCrawling] = useState(false);
@@ -296,6 +296,10 @@ export default function App() {
     setSettings(prev => ({ ...prev, [key]: !((prev as any)[key]) }));
   };
 
+  const handleSettingChange = (key: string, value: any) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
+  };
+
   const handleTemperatureChange = (val: number) => {
     setSettings(prev => ({ ...prev, temperature: val }));
   };
@@ -509,11 +513,16 @@ export default function App() {
                               ? 'bg-amber-900/40 border border-amber-500/30 text-amber-100'
                               : 'bg-slate-800 border border-white/5 text-slate-100'
                         }`}>
-                          {msg.role === 'brain' && msg.source === 'mure_prd_collaborative' && (
+                          {msg.role === 'brain' && (msg.source === 'mure_prd_collaborative' || msg.source === 'mure_3b_sentence_llm' || msg.source === 'mure_3b_sentence_llm_mock' || msg.source === 'mure_local_ts') && (
                             <div className="flex flex-col gap-1 mb-2">
                               <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20 w-fit">
                                 <RefreshCcw className="w-3 h-3 text-cyan-400" />
-                                <span className="text-[9px] font-bold text-cyan-400 uppercase tracking-widest">Collaborative Reasoning (MURE + PRD-LLM)</span>
+                                <span className="text-[9px] font-bold text-cyan-400 uppercase tracking-widest">
+                                  {msg.source === 'mure_local_ts' ? 'MURE (Local TS Fallback)' 
+                                    : msg.source === 'mure_3b_sentence_llm_mock' ? 'MURE + Sentence LLM 3B (Local Mock)' 
+                                    : msg.source === 'mure_3b_sentence_llm' ? 'MURE + Sentence LLM 3B' 
+                                    : 'Collaborative Reasoning (MURE + PRD-LLM)'}
+                                </span>
                               </div>
                               {msg.learned && msg.learned > 0 ? (
                                 <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 w-fit">
@@ -624,6 +633,7 @@ export default function App() {
                   <SettingsPanel 
                     settings={settings} 
                     onToggle={handleToggleSetting}
+                    onChange={handleSettingChange}
                     onTemperatureChange={handleTemperatureChange}
                     apiConfig={{ url: mureApiUrl, setUrl: setMureApiUrl }}
                   />

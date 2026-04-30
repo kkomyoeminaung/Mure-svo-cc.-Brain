@@ -57,7 +57,20 @@ async function startServer() {
         const result = reasoner.reason(message, settings);
         const confidence = result.calibratedConfidence || result.causalStrength;
         
-        const finalReply = speaker.generateResponse(message, result, reasoner, confidence);
+        let finalReply = speaker.generateResponse(message, result, reasoner, confidence);
+        let source = learnRes.success ? 'collaborative_learning' : 'knowledge_base';
+        
+        if (settings && settings.useAiStudio) {
+          if (settings.aiStudioModel === 'mure_only') {
+             source = 'mure_local_ts';
+          } else if (settings.aiStudioModel === 'mure_sentence') {
+             source = 'mure_3b_sentence_llm_mock';
+             finalReply = `${finalReply}\n\n[Mock 3B LLM Extrapolation]: ${message.split(' ').slice(0,3).join(' ')} usually relates to broader contextual consequences determined by the neural matrix. This is a local UI emulation of the 3B Sentence parameter output.`;
+          } else if (settings.aiStudioModel === 'mure_prd') {
+             source = 'mure_prd_collaborative';
+             finalReply = `${finalReply}\n\n[Qwen 7B PRD Extrapolation]: MURE's logical frame implies ${result.effect}. We can construct a deeper multi-step hypothesis around this... This is a local UI emulation of the PRD-LLM merged model.`;
+          }
+        }
 
         // 3. Collaborative Output
         const reply = note ? `${note}\n\n${finalReply}` : finalReply;
@@ -68,7 +81,7 @@ async function startServer() {
         res.json({
           reply: reply,
           frame: result,
-          source: learnRes.success ? 'collaborative_learning' : 'knowledge_base',
+          source: source,
           stats: reasoner.getStats(),
           chain: result.chain || []
         });

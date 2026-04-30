@@ -109,7 +109,7 @@ class MURESentenceLLM:
 # ============================================
 # 4. Interactive Chat Loop
 # ============================================
-def start_terminal_chat():
+undefined
     llm = MURESentenceLLM(mure_reasoner=mure)
 
     print("\n" + "="*50)
@@ -131,4 +131,4 @@ def start_terminal_chat():
             break
 
 if __name__ == "__main__":
-    start_terminal_chat()
+    start_api_server()

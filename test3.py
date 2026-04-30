@@ -1,3 +1,5 @@
+import torch
+from datasets import load_dataset
 import os
 os.environ["HF_HUB_DISABLE_AUTHENTICATION"] = "1"
 from google.colab import drive
@@ -61,7 +63,7 @@ if os.path.exists(RULES_FILE):
             for obj in reader:
                 rules.append(obj)
                 seen_keys.add((obj.get('cause'), obj.get('effect')))
-    except:
+    except Exception:
         pass
 
 def extract_with_gemma(chunk):
@@ -185,7 +187,6 @@ class RuleDataset(Dataset):
     def __init__(self, path, tk):
         print("📖 Mapping 5M rules (Virtual Mapping via HuggingFace Datasets for Efficiency)...")
         try:
-            from datasets import load_dataset
             self.data = load_dataset('json', data_files=path, split='train')
             self.data = self.data.filter(lambda x: x is not None)
         except Exception as e:
@@ -201,7 +202,6 @@ class RuleDataset(Dataset):
             return e['input_ids'].squeeze(), e['attention_mask'].squeeze()
         except Exception:
             # Fallback for errors
-            import torch
             return torch.zeros(128, dtype=torch.long), torch.zeros(128, dtype=torch.long)
 
 loader = DataLoader(RuleDataset(RULES_FILE, tokenizer), batch_size=8, shuffle=True)

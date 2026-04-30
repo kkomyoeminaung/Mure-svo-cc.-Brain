@@ -11,7 +11,7 @@ class MUREEngine:
 
     def load_rules(self):
         if os.path.exists(self.rules_path):
-            with open(self.rules_path, 'r') as f:
+            with open(, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     return data.get('causalMemory', [])
@@ -58,7 +58,7 @@ class MUREEngine:
         # Persist to disk
         try:
             os.makedirs(os.path.dirname(self.rules_path), exist_ok=True)
-            with open(self.rules_path, 'w') as f:
+            with open(, 'w', encoding='utf-8') as f:
                 output = {"causalMemory": self.rules}
                 json.dump(output, f, indent=4)
         except Exception as e:

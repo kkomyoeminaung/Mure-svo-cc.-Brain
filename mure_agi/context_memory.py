@@ -18,7 +18,7 @@ class ContextMemory:
                     data = json.load(f)
                     self.history = data.get('history', [])
                     self.current_topic = data.get('current_topic')
-            except:
+            except Exception:
                 self.history = []
 
     def save(self):

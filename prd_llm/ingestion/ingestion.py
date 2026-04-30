@@ -1,9 +1,9 @@
+import re
 class DocumentIngestion:
     def __init__(self, mure_engine):
         self.mure_engine = mure_engine
 
     def extract_causal_rules_with_prd(self, text):
-        import re
         patterns = [
             r"([A-Z][^.?!]*?) (?:causes|leads to|results in|triggers) ([^.?!]*?)[.?!]",
             r"Because of ([^.?!]*?), ([^.?!]*?)[.?!]",
@@ -32,8 +32,9 @@ class DocumentIngestion:
         return rules if rules else [{"cause": "study", "effect": "knowledge", "confidence": 0.1, "source": "fallback"}]
 
     def ingest_file(self, file_path):
-        with open(file_path, 'r') as f:
+        with open(, 'r', encoding='utf-8') as f:
             text = f.read()
             rules = self.extract_causal_rules_with_prd(text)
             for rule in rules:
-                self.mure_engine.add_rule(rule['cause'], rule['effect'], rule['confidence'], rule['source'])
+                score = rule.get('strength', rule.get('confidence', 0.7))
+                self.mure_engine.add_rule(rule['cause'], rule['effect'], score, rule.get('source', 'unknown'))

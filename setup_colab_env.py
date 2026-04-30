@@ -22,8 +22,8 @@ if not os.path.exists(RULES_DIR):
 
 if not os.path.exists(RULES_FILE):
     print(f"📄 Creating initial empty rules.json at {RULES_FILE}")
-    with open(RULES_FILE, 'w') as f:
-        json.dump([], f)
+    with open(RULES_FILE, 'w', encoding='utf-8') as f:
+        json.dump({"causalMemory": [], "svoMemory": [], "knowledgeGraph": []}, f, indent=2, ensure_ascii=False)
 else:
     print(f"✅ Found existing MURE knowledge base (rules.json)")
 
