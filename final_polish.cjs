@@ -1,20 +1,13 @@
-{
- "cells": [
-  {
-   "cell_type": "markdown",
-   "metadata": {},
-   "source": [
-    "# 🌌 MURE AGI: The Great Distillation (5M Rules)\n",
-    "### Pipeline: Extraction -> Distillation -> Deployment\n",
-    "**Created by Myo Min Aung**\n",
-    "\n",
-    "This system handles the autonomous generation of 5 million causal rules and distills the logic from Qwen-2-2B into our specialized Sentence-based LLM."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "metadata": {},
-   "source": [
+const fs = require('fs');
+const nb = JSON.parse(fs.readFileSync('distillation_notebook.ipynb', 'utf8'));
+
+// 1. Fix Cell Types
+nb.cells[1].cell_type = "code";
+nb.cells[2].cell_type = "code";
+nb.cells[10].cell_type = "code";
+
+// 2. Core Setup (Cell 1)
+nb.cells[1].source = [
     "## 1. Environment & Drive Verification\n",
     "from google.colab import drive\n",
     "import os\n",
@@ -37,14 +30,10 @@
     "        print(f\"✅ Workspace Found at: {BASE_DIR}\")\n",
     "    else:\n",
     "        print(f\"❌ ERROR: {BASE_DIR} ကို ရှာမတွေ့ပါ။\")\n"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+];
+
+// 3. Rule Generation (Cell 2)
+nb.cells[2].source = [
     "# 2. Rule Dataset Generation/Resume\n",
     "!pip install -q jsonlines\n",
     "import os, jsonlines, random\n",
@@ -72,98 +61,10 @@
     "    print(\"✅ 5M Rules Ready.\")\n",
     "else:\n",
     "    print(\"✅ Rule dataset complete.\")\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "metadata": {},
-   "source": [
-    "## 2. Dependencies\n",
-    "Installing specialized libraries for high-speed NLP and training."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "!pip install -q torch transformers accelerate bitsandbytes peft datasets sentencepiece jsonlines\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "metadata": {},
-   "source": [
-    "## 3. Persistent 5M Rule Extractions\n",
-    "This cell checks if `rules_5m.json` exists. If not, it starts/resumes extraction from Wikipedia until 5,000,000 rules are collected."
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "### ⚠️ Note on Rule Persistence\n",
-    "Rule generation and persistence logic is now handled in **Step 1** to ensure memory efficiency and prevent `NameError` during execution.\n",
-    "If you need to re-verify the rules, please check the output of Step 1.\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "metadata": {},
-   "source": [
-    "## 4. Distillation Engine Setup\n",
-    "Loading the Teacher (Qwen/Gemma) and Student models."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "import torch\n",
-    "from transformers import AutoModelForCausalLM, AutoTokenizer\n",
-    "\n",
-    "print(\"🧠 Activating Qwen 1.5B (Open) as Teacher...\")\n",
-    "teacher_id = 'Qwen/Qwen2.5-1.5B-Instruct'\n",
-    "tokenizer = AutoTokenizer.from_pretrained(teacher_id)\n",
-    "tokenizer.pad_token = tokenizer.eos_token\n",
-    "\n",
-    "teacher = AutoModelForCausalLM.from_pretrained(\n",
-    "    teacher_id,\n",
-    "    device_map='auto',\n",
-    "    torch_dtype=torch.float16\n",
-    ")\n",
-    "\n",
-    "print(\"👶 Initializing MURE 3B Student Engine...\")\n",
-    "# For demonstration, we simply load another instance or a smaller model as student.\n",
-    "# Here we use Qwen2.5-0.5B-Instruct as student for speed.\n",
-    "student_id = 'Qwen/Qwen2.5-0.5B-Instruct'\n",
-    "student = AutoModelForCausalLM.from_pretrained(\n",
-    "    student_id,\n",
-    "    device_map='auto',\n",
-    "    torch_dtype=torch.float16\n",
-    ")\n",
-    "print(\"✅ Mind Transfer Pipeline Linked!\")\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "metadata": {},
-   "source": [
-    "## 5. Knowledge Distillation with Auto-Resume\n",
-    "The core trainer that mimics Qwen's logic using the 5M rules."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+];
+
+// 4. Training (Cell 10)
+nb.cells[10].source = [
     "# 5. Knowledge Distillation Engine\n",
     "import os, torch, torch.nn.functional as F\n",
     "from torch.utils.data import DataLoader, Dataset\n",
@@ -247,52 +148,7 @@
     "loader = DataLoader(dataset, batch_size=8, shuffle=False)\n",
     "trainer = DistillationTrainer(teacher, student, BASE_DIR)\n",
     "trainer.train(loader)\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "metadata": {},
-   "source": [
-    "## 6. Final Deployment Export\n",
-    "Exports the weights and tokenizers for MURE production server."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
-    "torch.save(student.state_dict(), os.path.join(BASE_DIR, \"mure_final_3b_weights.pt\"))\n",
-    "tokenizer.save_pretrained(os.path.join(BASE_DIR, \"tokenizer\"))\n",
-    "print(\"🏆 Distillation Complete. MURE Brain is ready for deployment.\")"
-   ]
-  }
- ],
- "metadata": {
-  "accelerator": "GPU",
-  "colab": {
-   "gpuType": "T4",
-   "provenance": []
-  },
-  "kernelspec": {
-   "display_name": "Python 3",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "codemirror_mode": {
-    "name": "ipython",
-    "version": 3
-   },
-   "file_extension": ".py",
-   "mimetype": "text/x-python",
-   "name": "python",
-   "nbconvert_exporter": "python",
-   "pygments_lexer": "ipython3",
-   "version": "3.10.12"
-  }
- },
- "nbformat": 4,
- "nbformat_minor": 4
-}
+];
+
+fs.writeFileSync('distillation_notebook.ipynb', JSON.stringify(nb, null, 1));
+console.log('✅ Final Polish Fix Applied.');
