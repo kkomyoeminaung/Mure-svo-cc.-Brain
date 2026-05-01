@@ -60,7 +60,7 @@ def chat(req: Query):
     return {"reply": "I am still learning this pattern.", "source": "colab_python_backend"}
 
 def run_server():
-    # Try to use ngrok if available to give the user a public URL
+    # Try to use ngrok or localtunnel if available to give the user a public URL
     try:
         from pyngrok import ngrok
         import nest_asyncio
@@ -74,7 +74,8 @@ def run_server():
         print("👉 React Frontend ထဲက Settings မှာ အထက်ပါ URL ကို ထည့်ပေးပါ။")
         print("*"*60)
     except ImportError:
-        print("💡 ngrok မရှိပါ။ Local URL သာ သုံးပါမည်။ (pip install pyngrok nest-asyncio ဖြင့် install လုပ်နိုင်ပါသည်)")
+        print("💡 ngrok မရှိပါ။ (pip install pyngrok nest-asyncio ဖြင့် install လုပ်နိုင်ပါသည်)")
+        print("💡 ngrok အစား  !npm install -g localtunnel\n!lt --port 8000  ကိုသုံးလို့ရပါတယ်")
     
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
