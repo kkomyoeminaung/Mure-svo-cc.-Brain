@@ -32,7 +32,7 @@ class DocumentIngestion:
         return rules if rules else [{"cause": "study", "effect": "knowledge", "confidence": 0.1, "source": "fallback"}]
 
     def ingest_file(self, file_path):
-        with open(, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             text = f.read()
             rules = self.extract_causal_rules_with_prd(text)
             for rule in rules:

@@ -8,8 +8,9 @@ from .sqlite_storage import SQLiteStorage
 
 class MUREDreamMode:
     """Autonomous Learning from Wikipedia (Async Background Process)"""
-    def __init__(self, storage: SQLiteStorage):
+    def __init__(self, storage: SQLiteStorage, engine=None):
         self.storage = storage
+        self.engine = engine
         self.patterns = [
             r"(.*) causes (.*)",
             r"(.*) leads to (.*)",
@@ -58,6 +59,10 @@ class MUREDreamMode:
                     if is_new:
                         new_knowledge += 1
             await asyncio.sleep(1) # Be nice to Wiki API
+        
+        if new_knowledge > 0 and self.engine:
+            self.engine.refresh_cache()
+            print(f"🔄 Engine cache refreshed with {new_knowledge} new rules.")
         
         print(f"✨ Dream finished. Discovered {new_knowledge} new causal links.")
 

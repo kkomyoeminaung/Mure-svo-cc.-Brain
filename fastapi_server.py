@@ -69,6 +69,14 @@ def chat(req: ChatRequest):
         
         reply = "I understand."
         if isinstance(results, list):
+            if not results:
+                return {
+                    "reply": "I couldn't find a direct causal link for that yet.",
+                    "frame": {},
+                    "learned": learned,
+                    "source": "mure_python_backend",
+                    "stats": {"causalRules": len(mure.causal_memory)}
+                }
             frame = results[0]  # Just take the first one for simplicity in UI
         else:
             frame = results

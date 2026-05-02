@@ -22,15 +22,17 @@ class MUREReasoner:
         self._load_rules()
 
     def _load_rules(self):
+        MAX_RULES = int(os.environ.get("MURE_MAX_RULES", "50000"))
+        loaded = 0
         if os.path.exists(self.rules_path):
-            print(f"📖 Loading rules from {self.rules_path}")
-            # Speed load: only first 10k for API responsiveness
+            print(f"📖 Loading rules from {self.rules_path} (Limit: {MAX_RULES})")
             with open(self.rules_path, 'r') as f:
-                for i, line in enumerate(f):
-                    self.rules.append(json.loads(line))
-                    if i > 10000: break 
-        else:
-            print("⚠️ Rules file not found.")
+                for line in f:
+                    if line.strip():
+                        self.rules.append(json.loads(line))
+                        loaded += 1
+                        if loaded >= MAX_RULES: break 
+            print(f"✅ Loaded {loaded} rules.")
 
     def reason(self, query):
         q = query.lower()

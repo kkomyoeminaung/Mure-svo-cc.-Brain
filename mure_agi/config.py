@@ -6,9 +6,8 @@ from pathlib import Path
 class MUREConfig:
     # --- Persistence ---
     # Default to local if Drive not mounted (Colab path included)
-    import os
-    DRIVE_MOUNT_POINT = os.environ.get('MURE_DRIVE_MOUNT', '/content/drive')
-    BRAIN_BASE_PATH = os.environ.get('MURE_BRAIN_PATH', '/content/drive/MyDrive/svo cc brain') if os.path.exists("/content/drive") else "./brain_data"
+    DRIVE_MOUNT_POINT: str = os.environ.get('MURE_DRIVE_MOUNT', '/content/drive')
+    BRAIN_BASE_PATH: str = os.environ.get('MURE_BRAIN_PATH', '/content/drive/MyDrive/svo cc brain') if os.path.exists("/content/drive") else "./brain_data"
     
     # Paths
     RULES_DB_PATH = f"{BRAIN_BASE_PATH}/mure_rules.db"

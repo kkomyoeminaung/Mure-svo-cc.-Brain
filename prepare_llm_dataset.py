@@ -9,44 +9,51 @@ def prepare_llm_dataset(memory_dir="data/brain", output_file="mure_llm_dataset.j
     """
     dataset = []
     
-    # 1. Read all causal memory chunks
-    for file in os.listdir(memory_dir):
-        if file.startswith("causal_memory_") and file.endswith(".json"):
-            print(f"Processing {file}...")
-            filepath = os.path.join(memory_dir, file)
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    chunk = json.load(f)
+    # 1. Read all causal memory chunks + rules.json
+    source_files = [f for f in os.listdir(memory_dir) if (f.startswith("causal_memory_") and f.endswith(".json")) or f == "rules.json"]
+    
+    for file in source_files:
+        print(f"Processing {file}...")
+        filepath = os.path.join(memory_dir, file)
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # rules.json usually has {"causalMemory": [...]}
+                rules_list = data.get('causalMemory', []) if isinstance(data, dict) else data
+                
+                for rule in rules_list:
+                    cause = rule.get("cause", "")
+                    effect = rule.get("effect", "")
+                    strength = float(rule.get("strength", rule.get("confidence", 0.5)))
                     
-                    for rule in chunk:
-                        cause = rule.get("cause", "")
-                        effect = rule.get("effect", "")
-                        strength = rule.get("strength", 0)
+                    if not cause or not effect:
+                        continue
                         
-                        if not cause or not effect:
-                            continue
-                            
-                        # Generate different variations of prompts for better learning
-                        prompt_type = random.choice([1, 2, 3])
-                        
-                        if prompt_type == 1:
-                            instruction = f"What is the effect of: '{cause}'?"
-                            output = f"Based on MURE logical reasoning, '{cause}' causes '{effect}' (Confidence: {strength})."
-                        elif prompt_type == 2:
-                            instruction = f"Identify the causal relationship between '{cause}' and '{effect}'."
-                            if strength > 0.8:
-                                output = f"There is a strong causal relationship: '{cause}' leads to '{effect}'."
-                            else:
-                                output = f"There is a moderate/weak causal relationship: '{cause}' may lead to '{effect}'."
+                    # Generate different variations of prompts for better learning
+                    prompt_type = random.randint(1, 4)
+                    
+                    if prompt_type == 1:
+                        instruction = f"What is the effect of: '{cause}'?"
+                        output = f"Based on MURE logical reasoning, '{cause}' causes '{effect}' (Confidence: {strength:.2f})."
+                    elif prompt_type == 2:
+                        instruction = f"Identify the causal relationship between '{cause}' and '{effect}'."
+                        if strength > 0.8:
+                            output = f"There is a strong causal relationship: '{cause}' leads to '{effect}'."
                         else:
-                            instruction = f"If '{cause}' happens, what will logically follow?"
-                            output = f"Logically, this will result in '{effect}'."
-                            
-                        dataset.append({
-                            "instruction": instruction,
-                            "input": "",
-                            "output": output
-                        })
+                            output = f"There is a moderate causal relationship: '{cause}' may lead to '{effect}'."
+                    elif prompt_type == 3:
+                        instruction = f"If '{cause}' happens, what will logically follow?"
+                        output = f"Logically, this will result in '{effect}'."
+                    else:
+                        # Bilingual Myanmar example
+                        instruction = f"'{cause}' ဖြစ်ရင် ဘာဖြစ်မလဲ?"
+                        output = f"'{cause}' ကြောင့် '{effect}' ဖြစ်ပေါ်နိုင်ပါတယ်။ (Confidence: {strength:.2f})"
+                        
+                    dataset.append({
+                        "instruction": instruction,
+                        "input": "",
+                        "output": output
+                    })
             except Exception as e:
                 print(f"Error reading {file}: {e}")
 

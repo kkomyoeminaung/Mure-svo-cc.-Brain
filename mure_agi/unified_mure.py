@@ -14,7 +14,7 @@ class MUREUltimateAGI:
         self.storage = SQLiteStorage()
         self.engine = MUREEngine(self.storage)
         self.context = ContextMemory()
-        self.dreamer = MUREDreamMode(self.storage)
+        self.dreamer = MUREDreamMode(self.storage, engine=self.engine)
         
         self._bootstrap_seeds()
         print("🌟 MURE AGI Ready.")

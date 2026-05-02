@@ -11,7 +11,7 @@ class MUREEngine:
 
     def load_rules(self):
         if os.path.exists(self.rules_path):
-            with open(, 'r', encoding='utf-8') as f:
+            with open(self.rules_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     return data.get('causalMemory', [])
@@ -26,14 +26,14 @@ class MUREEngine:
     def reason(self, query):
         query = query.lower()
         if query in self.cause_index:
-            best_rule = max(self.cause_index[query], key=lambda x: x['confidence'])
+            best_rule = max(self.cause_index[query], key=lambda x: x.get('strength', x.get('confidence', 0.5)))
             # Provide a deeper chain
             chain = self.get_causal_chain(query, 5)
             # Find the final effect in the chain
             final_effect = chain[-1][1] if chain else best_rule['effect']
             return {
                 "chain": chain,
-                "confidence": best_rule['confidence'],
+                "confidence": best_rule.get('strength', best_rule.get('confidence', 0.5)),
                 "answer": final_effect,
                 "cause": best_rule['cause'],
                 "effect": best_rule['effect']
@@ -45,20 +45,21 @@ class MUREEngine:
         existing_rules = [r for r in self.rules if r['cause'].lower() == cause.lower() and r['effect'].lower() == effect.lower()]
         
         if existing_rules:
-            # Update confidence
+            # Update strength
             rule = existing_rules[0]
-            rule['confidence'] = min(1.0, rule['confidence'] + 0.1 * confidence)
+            current_strength = rule.get('strength', rule.get('confidence', 0.5))
+            rule['strength'] = min(1.0, current_strength + 0.1 * confidence)
             rule['source'] = 'reinforced'
         else:
             # Create new rule
-            rule = {"cause": cause, "effect": effect, "confidence": confidence, "source": source}
+            rule = {"cause": cause, "effect": effect, "strength": confidence, "source": source}
             self.rules.append(rule)
             self.cause_index[cause.lower()].append(rule)
         
         # Persist to disk
         try:
             os.makedirs(os.path.dirname(self.rules_path), exist_ok=True)
-            with open(, 'w', encoding='utf-8') as f:
+            with open(self.rules_path, 'w', encoding='utf-8') as f:
                 output = {"causalMemory": self.rules}
                 json.dump(output, f, indent=4)
         except Exception as e:
@@ -76,8 +77,8 @@ class MUREEngine:
         current = start_concept.lower()
         for _ in range(max_depth):
             if current in self.cause_index:
-                best_rule = max(self.cause_index[current], key=lambda x: x['confidence'])
-                chain.append((best_rule['cause'], best_rule['effect'], best_rule['confidence']))
+                best_rule = max(self.cause_index[current], key=lambda x: x.get('strength', x.get('confidence', 0.5)))
+                chain.append((best_rule['cause'], best_rule['effect'], best_rule.get('strength', best_rule.get('confidence', 0.5))))
                 current = best_rule['effect'].lower()
             else:
                 break

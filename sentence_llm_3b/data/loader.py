@@ -17,8 +17,8 @@ class RuleLoader:
     def load(self) -> List[Dict]:
         try:
             with open(self.rules_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        all_rules = data.get('causalMemory', []) if isinstance(data, dict) else data
+                data = json.load(f)
+            all_rules = data.get('causalMemory', []) if isinstance(data, dict) else data
             self.rules = all_rules[:self.max_rules]
             print(f"Loaded {len(self.rules):,} causal rules")
         except FileNotFoundError:
