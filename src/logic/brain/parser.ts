@@ -52,7 +52,7 @@ export class SVOCCParser {
     }
 
     // SVO pattern extraction (fallback)
-    const svo = this.extractSVO(sentence);
+    const svo = this.extractSVO(words);
     frame.subject = svo.subject;
     frame.verb = svo.verb;
     frame.object = svo.object;
@@ -80,13 +80,19 @@ export class SVOCCParser {
     const isMyanmar = MyanmarProcessor.isMyanmar(sentence);
     
     if (!isMyanmar) {
-      const words = sentence.toLowerCase().split(/\s+/);
-      for (let i = 0; i < words.length; i++) {
-          if (this.causalVerbs.has(words[i])) {
+      const lower = sentence.toLowerCase();
+      // Sort multi-word phrases first to prioritize longest match
+      const sortedVerbs = Array.from(this.causalVerbs).sort((a, b) => b.length - a.length);
+      
+      for (const verb of sortedVerbs) {
+          // Check for exact phrase surrounded by spaces or boundaries
+          const regex = new RegExp(`\\b${verb}\\b`, 'i');
+          const match = lower.match(regex);
+          if (match && match.index !== undefined) {
               return {
-                  cause: words.slice(0, i).join(' '),
-                  verb: words[i],
-                  effect: words.slice(i + 1).join(' ')
+                  cause: sentence.slice(0, match.index).trim(),
+                  verb: sentence.slice(match.index, match.index + verb.length).trim(),
+                  effect: sentence.slice(match.index + verb.length).trim()
               };
           }
       }
@@ -118,8 +124,7 @@ export class SVOCCParser {
     return null;
   }
 
-  private extractSVO(sentence: string): { subject: string; verb: string; object: string } {
-    const words = sentence.split(/\s+/);
+  private extractSVO(words: string[]): { subject: string; verb: string; object: string } {
     const result = { subject: '', verb: '', object: '' };
 
     if (words.length >= 2) {

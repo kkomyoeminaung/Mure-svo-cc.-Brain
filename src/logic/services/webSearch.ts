@@ -16,29 +16,41 @@ export class WebSearchService {
   private userAgent = 'MURE-AI/2.0 (Educational AI Studio; nodejs)';
 
   async searchWikipedia(query: string): Promise<SearchResult[]> {
+    if (!query) return [];
     try {
       const isMyanmar = /[\u1000-\u109f]/.test(query);
       const domain = isMyanmar ? 'my' : 'en';
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      
       const searchUrl = `https://${domain}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=3`;
-      const response = await fetch(searchUrl, { headers: { 'User-Agent': this.userAgent } });
+      const response = await fetch(searchUrl, { headers: { 'User-Agent': this.userAgent }, signal: controller.signal });
       const data = await response.json();
+      clearTimeout(timeoutId);
 
       const results: SearchResult[] = [];
       const searchItems = data.query?.search || [];
+      if (searchItems.length === 0) return results;
 
-      for (const item of searchItems) {
-        const title = item.title;
-        const extractUrl = `https://${domain}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=extracts&exintro&explaintext&format=json`;
-        const extResponse = await fetch(extractUrl, { headers: { 'User-Agent': this.userAgent } });
-        const extData = await extResponse.json();
+      // Extract batch titles
+      const titles = searchItems.map((i: any) => i.title).join('|');
+      
+      const extController = new AbortController();
+      const extTimeoutId = setTimeout(() => extController.abort(), 6000);
+      
+      const extractUrl = `https://${domain}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(titles)}&prop=extracts&exintro&explaintext&format=json`;
+      const extResponse = await fetch(extractUrl, { headers: { 'User-Agent': this.userAgent }, signal: extController.signal });
+      const extData = await extResponse.json();
+      clearTimeout(extTimeoutId);
 
-        const pages = extData.query?.pages || {};
-        const pageId = Object.keys(pages)[0];
-        const extract = pages[pageId]?.extract?.slice(0, 500) || '';
-
+      const pages = extData.query?.pages || {};
+      for (const key in pages) {
+        const page = pages[key];
+        const extract = page.extract?.slice(0, 500) || '';
         if (extract) {
           results.push({
-            title,
+            title: page.title,
             snippet: extract,
             source: isMyanmar ? 'myanmar_wikipedia' : 'wikipedia'
           });
@@ -52,11 +64,16 @@ export class WebSearchService {
   }
 
   async searchDuckDuckGo(query: string): Promise<SearchResult[]> {
+    if (!query) return [];
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      
       // Mocking the DuckDuckGo Instant Answer API which is public
       const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-      const response = await fetch(url, { headers: { 'User-Agent': this.userAgent } });
+      const response = await fetch(url, { headers: { 'User-Agent': this.userAgent }, signal: controller.signal });
       const data = await response.json();
+      clearTimeout(timeoutId);
 
       const results: SearchResult[] = [];
 
@@ -102,6 +119,11 @@ export class WebSearchService {
       { pattern: /(\w+(?:\s+\w+)*) results in (\w+(?:\s+\w+)*)/gi, strength: 0.7 },
       { pattern: /because of (\w+(?:\s+\w+)*), (\w+(?:\s+\w+)*)/gi, strength: 0.6 },
       { pattern: /(\w+(?:\s+\w+)*) is caused by (\w+(?:\s+\w+)*)/gi, strength: 0.6 },
+      // Myanmar Causal Patterns
+      { pattern: /([^\s]+(?:[\s]+[^\s]+)*?)[\s]*ကြောင့်[\s]*([^\s]+(?:[\s]+[^\s]+)*?)[\s]*ဖြစ်/g, strength: 0.78 },
+      { pattern: /([^\s]+(?:[\s]+[^\s]+)*?)[\s]*ဟာ[\s]*([^\s]+(?:[\s]+[^\s]+)*?)[\s]*ကို[\s]*ဖြစ်စေ/g, strength: 0.78 },
+      { pattern: /([^\s]+(?:[\s]+[^\s]+)*?)[\s]*ဖြစ်လို့[\s]*([^\s]+(?:[\s]+[^\s]+)*?)[\s]*ဖြစ်/g, strength: 0.7 },
+      { pattern: /([^\s]+(?:[\s]+[^\s]+)*?)[\s]*က[\s]*([^\s]+(?:[\s]+[^\s]+)*?)[\s]*ဖြစ်ပေါ်စေ/g, strength: 0.8 }
     ];
 
     const extracted: CausalExtraction[] = [];

@@ -55,10 +55,45 @@ async function startServer() {
 
         // 2. Symbolic Reasoning (MURE)
         const result = reasoner.reason(message, settings);
-        const confidence = result.calibratedConfidence || result.causalStrength;
+        let confidence = result.calibratedConfidence || result.causalStrength || 0;
+        let source = learnRes.success ? 'collaborative_learning' : 'knowledge_base';
+
+        // --- Active RAG & Continuous Learning from Web ---
+        let ragLearnedCount = 0;
+        if ((!result.effect || confidence < 0.5) && settings?.rag !== false) {
+           console.log(`[RAG] Low confidence (${Math.round(confidence*100)}%). Triggering semantic web search for continuous learning...`);
+           try {
+             const searchResults = await webSearch.searchAll(message);
+             for (const res of searchResults) {
+                // Continuous Learning Integration: Ingesting web facts dynamically
+                const extractions = webSearch.extractCausal(res.snippet);
+                for (const extract of extractions) {
+                   reasoner.addCausalKnowledge(extract.cause, extract.effect, extract.strength, 0.85, 'rag_web_crawler');
+                   ragLearnedCount++;
+                }
+             }
+
+             if (ragLearnedCount > 0) {
+                // Re-evaluate logic based on newly acquired RAG knowledge
+                const updatedResult = reasoner.reason(message, settings);
+                const newConfidence = updatedResult.calibratedConfidence || updatedResult.causalStrength || 0;
+                
+                if (updatedResult.effect && newConfidence > confidence) {
+                   Object.assign(result, updatedResult);
+                   confidence = newConfidence;
+                   source = 'rag_web_augmented';
+                   note += `\n🌐 [RAG Active] Dynamically learned ${ragLearnedCount} new causal links from the web to answer this!`;
+                } else {
+                   note += `\n🌐 [RAG Active] Dynamically learned ${ragLearnedCount} new causal links from the web, but couldn't directly answer your query.`;
+                }
+             }
+           } catch (e) {
+             console.error('[RAG] Fallback Web Search failed:', e);
+           }
+        }
         
         let finalReply = speaker.generateResponse(message, result, reasoner, confidence);
-        let source = learnRes.success ? 'collaborative_learning' : 'knowledge_base';
+
         
         if (settings && settings.useAiStudio) {
           if (settings.aiStudioModel === 'mure_only') {

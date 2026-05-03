@@ -5,11 +5,13 @@ import os
 from typing import List, Dict, Optional
 from .parser import CompleteParser
 from .processor import MyanmarProcessor
+from .web_search import WebSearchService
 
 class MyanmarMURE:
     def __init__(self, rules_path: str):
         self.rules_path = rules_path
         self.parser = CompleteParser()
+        self.web_search = WebSearchService()
         self.causal_memory = []
         self.causal_index = {}
         self.load_rules()
@@ -39,21 +41,46 @@ class MyanmarMURE:
             json.dump(output, f, indent=2, ensure_ascii=False)
 
     def find_matches(self, cause: str) -> List[Dict]:
+        if not cause:
+            return []
         cause_lower = cause.lower().strip()
         direct = self.causal_index.get(cause_lower, [])
         if direct:
             return sorted(direct, key=lambda x: x.get('strength', 0), reverse=True)
         
-        # Word overlap
+        # Fast Semantic / Substring Match (Replaces strict dict lookup)
         is_myanmar = MyanmarProcessor.is_myanmar(cause_lower)
         query_segments = MyanmarProcessor.segment(cause_lower) if is_myanmar else cause_lower.split()
         
         results = []
-        for segment in query_segments:
-            if segment in self.causal_index:
-                results.extend(self.causal_index[segment])
+        seen = set()
+        checks = 0
         
-        return sorted(results, key=lambda x: x.get('strength', 0), reverse=True)
+        for key, rules in self.causal_index.items():
+            if checks > 50000:  # Hard limit for efficiency
+                break
+            checks += 1
+            
+            # Simple substring or word overlap
+            score = 0
+            if key in cause_lower or cause_lower in key:
+                score = 0.9
+            else:
+                match_count = sum(1 for seg in query_segments if seg in key)
+                score = match_count / len(query_segments) if query_segments else 0
+                
+            if score > 0.5:
+                for rule in rules:
+                    # Prevent duplicates and apply score penalty
+                    rule_id = f"{rule.get('cause')}_{rule.get('effect')}"
+                    if rule_id not in seen:
+                        seen.add(rule_id)
+                        # Clone rule and adjust strength by match confidence
+                        r = dict(rule)
+                        r['strength'] = r.get('strength', 0.8) * score
+                        results.append(r)
+        
+        return sorted(results, key=lambda x: x.get('strength', 0), reverse=True)[:10]
 
     def reason(self, text: str):
         # We handle multiple frames from conjunctions
@@ -63,6 +90,43 @@ class MyanmarMURE:
         for frame in frames:
             if frame.cause:
                 matches = self.find_matches(frame.cause)
+                
+                # RAG + Continuous Learning Integration
+                if not matches:
+                    print(f"RAG Activated: Searching Wikipedia for '{frame.cause}'")
+                    wiki_results = self.web_search.search_wikipedia(frame.cause)
+                    for res in wiki_results:
+                        snippet = res.get('snippet', '')
+                        extracted = self.web_search.extract_causal(snippet)
+                        for ext in extracted:
+                            cause_lower = ext["cause"].lower()
+                            effect_lower = ext["effect"].lower()
+                            
+                            # Check for duplicates to prevent memory bloat/redundancy
+                            is_duplicate = False
+                            if cause_lower in self.causal_index:
+                                for existing_rule in self.causal_index[cause_lower]:
+                                    if existing_rule.get('effect') == effect_lower:
+                                        is_duplicate = True
+                                        break
+                                        
+                            if not is_duplicate:
+                                new_rule = {
+                                    "cause": cause_lower,
+                                    "effect": effect_lower,
+                                    "strength": ext["strength"],
+                                    "timestamp": time.time(),
+                                    "source": res["source"]
+                                }
+                                self.causal_memory.append(new_rule)
+                                # Also update index instantly
+                                if cause_lower not in self.causal_index:
+                                    self.causal_index[cause_lower] = []
+                                self.causal_index[cause_lower].append(new_rule)
+                    
+                    self.save_rules() # Persist continuous learning
+                    matches = self.find_matches(frame.cause) # Try again after learning
+                
                 if matches:
                     # Apply negation
                     if frame.is_negated:

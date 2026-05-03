@@ -415,11 +415,33 @@ class CompleteParser:
         """Parse causal sentences"""
         words = sentence.lower().split()
         
-        for i, word in enumerate(words):
-            if word in self.causal_verbs:
-                cause = ' '.join(words[:i])
-                effect = ' '.join(words[i+1:])
-                return {'cause': cause, 'effect': effect, 'verb': word}
+        # Sort multi-word phrases first
+        sorted_verbs = sorted(list(self.causal_verbs), key=lambda v: len(v), reverse=True)
+        lower_sentence = sentence.lower()
+        
+        for verb in sorted_verbs:
+            if not any('\u1000' <= c <= '\u109f' for c in verb):
+                # English word/phrase bounds
+                pattern = r'\b' + re.escape(verb) + r'\b'
+                match = re.search(pattern, lower_sentence)
+                if match:
+                    idx = match.start()
+                    end_idx = match.end()
+                    return {
+                        'cause': sentence[:idx].strip(),
+                        'effect': sentence[end_idx:].strip(),
+                        'verb': sentence[idx:end_idx].strip()
+                    }
+            else:
+                # Myanmar phrase without word boundaries
+                if verb in lower_sentence:
+                    idx = lower_sentence.find(verb)
+                    end_idx = idx + len(verb)
+                    return {
+                        'cause': sentence[:idx].strip(),
+                        'effect': sentence[end_idx:].strip(),
+                        'verb': sentence[idx:end_idx].strip()
+                    }
         
         # Myanmar patterns
         if 'ကြောင့်' in sentence:

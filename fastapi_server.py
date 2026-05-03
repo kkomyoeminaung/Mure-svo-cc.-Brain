@@ -65,16 +65,24 @@ def chat(req: ChatRequest):
         learned = mure.learn(req.message)
         
         # Reason to generate response
+        # In Python reason() incorporates RAG and Continuous Learning if no direct match is found
+        rules_before = len(mure.causal_memory)
         results = mure.reason(req.message)
+        rules_after = len(mure.causal_memory)
+        
+        rag_learned = (rules_after > rules_before)
         
         reply = "I understand."
         if isinstance(results, list):
             if not results:
+                reply = "I couldn't find a direct causal link for that yet."
+                if rag_learned:
+                   reply = f"🌐 [RAG Active] Dynamically learned {rules_after - rules_before} new causal links from the web, but couldn't answer your specific query directly.\n\n" + reply
                 return {
-                    "reply": "I couldn't find a direct causal link for that yet.",
+                    "reply": reply,
                     "frame": {},
-                    "learned": learned,
-                    "source": "mure_python_backend",
+                    "learned": learned or rag_learned,
+                    "source": "rag_web_augmented" if rag_learned else "mure_python_backend",
                     "stats": {"causalRules": len(mure.causal_memory)}
                 }
             frame = results[0]  # Just take the first one for simplicity in UI
@@ -90,13 +98,16 @@ def chat(req: ChatRequest):
         elif getattr(frame, "is_hypothetical", False):
             reply = "Hypothetically, that would be interesting."
             
+        if rag_learned:
+           reply = f"🌐 [RAG Active] Dynamically learned {rules_after - rules_before} new causal links from the web!\n\n" + reply
+            
         frame_dict = frame.__dict__
             
         return {
             "reply": reply,
             "frame": frame_dict,
-            "learned": learned,
-            "source": "mure_python_backend",
+            "learned": learned or rag_learned,
+            "source": "rag_web_augmented" if rag_learned else "mure_python_backend",
             "stats": {"causalRules": len(mure.causal_memory)}
         }
     except Exception as e:

@@ -74,9 +74,11 @@ class MUREEngine:
 
     def get_causal_chain(self, start_concept, max_depth):
         chain = []
+        visited = set()
         current = start_concept.lower()
         for _ in range(max_depth):
-            if current in self.cause_index:
+            if current in self.cause_index and current not in visited:
+                visited.add(current)
                 best_rule = max(self.cause_index[current], key=lambda x: x.get('strength', x.get('confidence', 0.5)))
                 chain.append((best_rule['cause'], best_rule['effect'], best_rule.get('strength', best_rule.get('confidence', 0.5))))
                 current = best_rule['effect'].lower()

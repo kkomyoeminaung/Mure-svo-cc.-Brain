@@ -813,34 +813,43 @@ export class SVOCCReasoner {
     const directResults = this.causalIndex.get(causeLower) || [];
     if (directResults.length > 0) return directResults.sort((a, b) => b.strength - a.strength);
     
-    // 2. Hybrid Search Logic (60% Fuzzy + 40% Overlap)
+    // 2. Optimized Semantic / Substring Match (Replaces computationally expensive fuzzball extract)
     const candidates: { rule: CausalKnowledge, score: number }[] = [];
+    const queryTokens = isMyanmar ? MyanmarProcessor.segment(causeLower) : causeLower.split(/\s+/).filter(w => w.length > 2);
     
-    // Get all candidate causes
-    const allCauses = Array.from(this.causalIndex.keys());
-    
-    // Fuzzy matching using fuzzball
-    const fuzzyMatches = fuzz.extract(causeLower, allCauses, { scorer: fuzz.partial_ratio, limit: 100 });
-    
-    for (const match of fuzzyMatches) {
-        const matchingCause = match[0];
-        const fuzzyScore = match[1] / 100;
-        
-        // Semantic Overlap Score
-        const queryWords = isMyanmar ? MyanmarProcessor.segment(causeLower) : causeLower.split(/\s+/).filter(w => w.length > 2);
-        const ruleWords = isMyanmar ? MyanmarProcessor.segment(matchingCause) : matchingCause.split(/\s+/).filter(w => w.length > 2);
-        
-        const overlapCount = queryWords.filter(w => ruleWords.includes(w)).length;
-        const overlapScore = queryWords.length > 0 ? overlapCount / Math.max(queryWords.length, ruleWords.length) : 0;
-        
-        const hybridScore = (fuzzyScore * 0.6) + (overlapScore * 0.4);
-        
-        if (hybridScore > 0.6) {
-            const rules = this.causalIndex.get(matchingCause) || [];
-            rules.forEach(r => {
-                candidates.push({ rule: r, score: hybridScore * r.strength });
-            });
-        }
+    // Instead of looping through all 15M keys with fuzzy matching, use the pre-built explicit syllable/keyword index if available
+    const matchedKeys = new Set<string>();
+
+    if (isMyanmar && this.syllableIndex.size > 0) {
+      // Use Syllable Index for fast lookup
+      for (const token of queryTokens) {
+         if (this.syllableIndex.has(token)) {
+            const indices = this.syllableIndex.get(token)!;
+            // Only sample a subset to prevent explosion
+            let count = 0;
+            for (const idx of indices) {
+               if (count++ > 50) break;
+               const rule = this.causalMemory[idx];
+               if (rule && !matchedKeys.has(rule.cause)) {
+                 matchedKeys.add(rule.cause);
+                 candidates.push({ rule, score: rule.strength * 0.8 }); // Approximated score
+               }
+            }
+         }
+      }
+    } else {
+      // Fast fallback for English / Missing Index: Check partial substring instead of heavy Levenshtein
+      let checks = 0;
+      for (const [key, rules] of this.causalIndex.entries()) {
+         if (checks++ > 100000) break; // Hard limit for safety
+         
+         const score = this.fastSimilarity(causeLower, key, queryTokens);
+         if (score > 0.5) {
+             for (const r of rules) {
+                 candidates.push({ rule: r, score: score * r.strength });
+             }
+         }
+      }
     }
 
     if (candidates.length > 0) {
@@ -851,6 +860,15 @@ export class SVOCCReasoner {
     }
     
     return [];
+  }
+
+  private fastSimilarity(query: string, key: string, queryTokens: string[]): number {
+     if (key.includes(query) || query.includes(key)) return 0.9;
+     let matchCount = 0;
+     for (const token of queryTokens) {
+        if (key.includes(token)) matchCount++;
+     }
+     return queryTokens.length > 0 ? matchCount / queryTokens.length : 0;
   }
 
   public getDetailedChain(start: string, maxDepth = 3): [string, string, number][] {
