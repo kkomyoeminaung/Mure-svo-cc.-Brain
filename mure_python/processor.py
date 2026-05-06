@@ -17,9 +17,9 @@ class MyanmarProcessor:
     def segment(text: str) -> list:
         if not text:
             return []
-        # Regex for Myanmar syllables
-        syllable_regex = r'[\u1000-\u1021\u1023-\u1027\u1029\u102a\u103f\u104c\u104d][\u102b-\u103e]*[\u1039\u103a]?'
-        matches = re.findall(syllable_regex, text)
+        # Regex for Myanmar syllables + English words/numbers + spaces
+        combined_regex = r'[\u1000-\u1021\u1023-\u1027\u1029\u102a\u103f\u104c\u104d][\u102b-\u103e]*[\u1039\u103a]?|[a-zA-Z0-9]+|\s+|[^\u1000-\u109f]'
+        matches = re.findall(combined_regex, text)
         if not matches:
             return text.split()
-        return matches
+        return [m.strip() for m in matches if m.strip()]

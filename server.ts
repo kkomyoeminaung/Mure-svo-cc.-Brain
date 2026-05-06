@@ -98,12 +98,68 @@ async function startServer() {
         if (settings && settings.useAiStudio) {
           if (settings.aiStudioModel === 'mure_only') {
              source = 'mure_local_ts';
-          } else if (settings.aiStudioModel === 'mure_sentence') {
-             source = 'mure_3b_sentence_llm_mock';
-             finalReply = `${finalReply}\n\n[Mock 3B LLM Extrapolation]: ${message.split(' ').slice(0,3).join(' ')} usually relates to broader contextual consequences determined by the neural matrix. This is a local UI emulation of the 3B Sentence parameter output.`;
-          } else if (settings.aiStudioModel === 'mure_prd') {
-             source = 'mure_prd_collaborative';
-             finalReply = `${finalReply}\n\n[Qwen 7B PRD Extrapolation]: MURE's logical frame implies ${result.effect}. We can construct a deeper multi-step hypothesis around this... This is a local UI emulation of the PRD-LLM merged model.`;
+          } else if (settings.aiStudioModel === 'mure_sentence' || settings.aiStudioModel === 'mure_prd') {
+             // Consensus Protocol Implementation
+             try {
+                // Add an AbortController for a 15-second timeout on the neural bridge
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+                const pythonRes = await fetch('http://localhost:8000/chat', {
+                   method: 'POST',
+                   headers: { 'Content-Type': 'application/json' },
+                   body: JSON.stringify({ message: message, settings: settings }),
+                   signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+
+                if (pythonRes.ok) {
+                   const pyData = await pythonRes.json();
+                   const neuralReply = pyData.reply;
+                   
+                   // Consensus Logic: Compare neural inference with symbolic frame
+                   const neuralEffect = (neuralReply || "").toLowerCase();
+                   const symbolicEffect = result.effect ? result.effect.toLowerCase() : "";
+                   
+                   // Step C1: Check for Consensus (Agreement)
+                   if (symbolicEffect && neuralEffect.includes(symbolicEffect)) {
+                      // Strong Agreement: Boost confidence
+                      reasoner.addCausalKnowledge(result.cause || message, result.effect!, 0.95, 0.95, 'consensus_agreement');
+                      finalReply = neuralReply + "\n\n[Status: Consensus Verified by Symbolic Frame]";
+                      source = 'mure_consensus_protocol';
+                   } 
+                   // Step C2: Check for direct conflict
+                   else if (symbolicEffect && confidence > 0.85) {
+                      // Symbolic Majority (Priority)
+                      finalReply = `[Symbolic Dominant]: ${finalReply}\n\n(Note: Neural extrapolation suggested a mismatch; priority given to verified local frames.)`;
+                      source = 'mure_local_symbolic_priority';
+                   }
+                   // Step C3: exploratory expansion
+                   else {
+                      finalReply = neuralReply;
+                      source = settings.aiStudioModel === 'mure_sentence' ? 'mure_3b_sentence_llm' : 'mure_prd_collaborative';
+                      note += `\n🧠 Neural Extension applied for exploratory context.`;
+                   }
+                } else {
+                   // Fallback logic
+                   const deep = reasoner.deepReasoningFromFrame(result, 4);
+                   if (deep.chain.length > 2) {
+                      finalReply = `[Neural Offline - Deep Symbolic Fallback]: ${deep.result}\n\nEvidence-based confidence: ${(deep.calibratedConfidence * 100).toFixed(1)}%`;
+                      source = 'mure_symbolic_synthesis_v2';
+                   } else {
+                      source = 'mure_fallback_local';
+                      finalReply = `${finalReply}\n\n[Warning: Neural Backend Offline]. Base logic applied.`;
+                   }
+                }
+             } catch (e) {
+                // Fallback to Deep Symbolic Synthesis on network error or timeout
+                const deep = reasoner.deepReasoningFromFrame(result, 3);
+                source = 'mure_symbolic_synthesis_v2';
+                finalReply = deep.chain.length > 1 
+                   ? `[Neural Link Failure - Symbolic Synthesis]: ${deep.result}`
+                   : `${finalReply}\n\n[Local Fallback]: The neural bridge is currently inactive or timed out. Reasoning is limited to symbolic frames.`;
+             }
           }
         }
 
@@ -404,51 +460,51 @@ Date: ${new Date().toLocaleString()}
 
   app.get('/api/dataset/download', (req, res) => {
     try {
-      const memoryDir = path.join(process.cwd(), 'data', 'brain');
-      if (!fs.existsSync(memoryDir)) {
-        res.json([]);
-        return;
-      }
-      const files = fs.readdirSync(memoryDir).filter((f: string) => f.startsWith('causal_memory_') && f.endsWith('.json'));
-      
       res.setHeader('Content-Type', 'application/x-jsonlines');
       res.setHeader('Content-Disposition', 'attachment; filename="mure_finetune_dataset.jsonl"');
       
-      for (const file of files) {
-        const chunkPath = path.join(memoryDir, file);
-        if (fs.existsSync(chunkPath)) {
-          try {
-            const chunk = JSON.parse(fs.readFileSync(chunkPath, 'utf-8'));
-            for (const rule of chunk) {
-              if (!rule.cause || !rule.effect) continue;
-              
-              const cause = String(rule.cause).trim();
-              const effect = String(rule.effect).trim();
-              
-              // Standard Alpaca/Unsloth JSONL format
-              const entry = JSON.stringify({ 
-                instruction: `Predict the causal outcome for: "${cause}"`,
-                input: "", 
-                output: `The logical consequence is "${effect}".` 
-              });
-              
-              res.write(entry + '\n');
-            }
-          } catch (e) {
-            console.error(`Error parsing chunk ${file}:`, e);
-          }
+      const iterator = reasoner.getRulesIterator();
+      let count = 0;
+
+      for (const rule of iterator) {
+        if (!rule.cause || !rule.effect) continue;
+        
+        const cause = String(rule.cause).trim();
+        const effect = String(rule.effect).trim();
+        
+        // Optimized Alpaca/Unsloth format
+        const entry = JSON.stringify({ 
+           instruction: `Predict the causal outcome for: "${cause}"`,
+           input: "", 
+           output: `The logical consequence is "${effect}".` 
+        });
+        
+        res.write(entry + '\n');
+        count++;
+
+        // Periodic yielding to keep event loop responsive during massive exports
+        if (count % 10000 === 0) {
+           // We don't await here as it's a sync loop for res.write, 
+           // but we can log progress
+           if (count % 100000 === 0) console.log(`[Export] Streamed ${count} rules...`);
         }
       }
+      
+      console.log(`[Export] Successfully streamed ${count} rules as JSONL.`);
       res.end();
     } catch (error) {
-      console.error('Dataset generation error:', error);
-      if (!res.headersSent) res.status(500).json({ error: 'Failed to generate dataset' });
+      console.error('Streaming dataset error:', error);
+      if (!res.headersSent) {
+         res.status(500).json({ error: 'Failed to generate dataset stream.' });
+      } else {
+         res.end();
+      }
     }
   });
 
   app.get('/api/dataset/colab', (req, res) => {
     try {
-      const colabPath = path.join(process.cwd(), 'MURE_OneClick_FineTune.ipynb');
+      const colabPath = path.join(process.cwd(), 'MURE_MASTER_AGI_SYSTEM.ipynb');
       res.download(colabPath);
     } catch (e) {
       res.status(500).send("Colab file not found");

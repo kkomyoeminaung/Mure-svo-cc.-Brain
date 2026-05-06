@@ -6,17 +6,29 @@ from mure_python.reasoner import MyanmarMURE
 
 app = FastAPI(title="MURE API Backend (Level 1 + Level 2)")
 
-# Allow all origins for easy testing
+# Allow specific origins for production security
+origins = [
+    "http://localhost:3000",
+    "https://ais-dev-lnpi6bjqnttg2qsfq3vrnx-233314444339.europe-west3.run.app",
+    "https://ais-pre-lnpi6bjqnttg2qsfq3vrnx-233314444339.europe-west3.run.app"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 RULES_PATH = os.environ.get("MURE_BRAIN_PATH", "data/brain/rules.json")
-mure = MyanmarMURE(rules_path=RULES_PATH)
+mure = None
+
+@app.on_event("startup")
+async def startup_event():
+    global mure
+    mure = MyanmarMURE(rules_path=RULES_PATH)
+    print("✅ MURE Engine initialized on startup.")
 
 class ChatRequest(BaseModel):
     message: str
@@ -33,12 +45,14 @@ def health_check():
 
 @app.get("/stats")
 def get_stats():
+    if not mure: return {"error": "Engine starting..."}
     return {
         "causalRules": len(mure.causal_memory),
     }
 
 @app.post("/reason")
 def reason(req: ReasonRequest):
+    if not mure: raise HTTPException(status_code=503, detail="Engine starting...")
     try:
         results = mure.reason(req.message)
         # Handle if results is a single dataclass or a list of dataclasses
@@ -52,6 +66,7 @@ def reason(req: ReasonRequest):
 
 @app.post("/learn")
 def learn(req: LearnRequest):
+    if not mure: raise HTTPException(status_code=503, detail="Engine starting...")
     try:
         success = mure.learn(req.message)
         return {"success": success, "stats": {"causalRules": len(mure.causal_memory)}}
@@ -60,6 +75,7 @@ def learn(req: LearnRequest):
 
 @app.post("/chat")
 def chat(req: ChatRequest):
+    if not mure: raise HTTPException(status_code=503, detail="Engine starting...")
     try:
         # First check if we can learn something new
         learned = mure.learn(req.message)

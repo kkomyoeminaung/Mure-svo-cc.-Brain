@@ -24,17 +24,16 @@ export class MyanmarProcessor {
   static segment(text: string): string[] {
     if (!text) return [];
     
-    // Regex for Myanmar syllables
-    // This is a simplified version but effective for basic segmentation
-    const syllableRegex = /[\u1000-\u1021\u1023-\u1027\u1029\u102a\u103f\u104c\u104d][\u102b-\u103e]*[\u1039\u103a]?/g;
-    const matches = text.match(syllableRegex);
+    // Regex for Myanmar syllables + non-Myanmar word blocks
+    // This preserves English words, numbers, and spaces while segmenting Myanmar text
+    const combinedRegex = /[\u1000-\u1021\u1023-\u1027\u1029\u102a\u103f\u104c\u104d][\u102b-\u103e]*[\u1039\u103a]?|[a-zA-Z0-9]+|\s+|[^\u1000-\u109f]/g;
+    const matches = text.match(combinedRegex);
     
     if (!matches) {
-      // If no Myanmar syllables found, split by space or character
       return text.split(/\s+/).filter(Boolean);
     }
     
-    return matches;
+    return matches.map(m => m.trim()).filter(Boolean);
   }
 
   static cleanQuery(text: string): string {

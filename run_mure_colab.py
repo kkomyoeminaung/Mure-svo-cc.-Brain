@@ -1,4 +1,8 @@
-from sentence_llm_3b.models.graph_network import CompleteSentenceLLM
+try:
+    from sentence_llm_3b.models.graph_network import CompleteSentenceLLM
+except ImportError:
+    CompleteSentenceLLM = None
+    print("Warning: sentence_llm_3b not found. Some functionality will be disabled.")
 # ==============================================================================
 # MERGED MURE + SENTENCE-BASED LLM 3B FOR GOOGLE COLAB (NO API, NO URL)
 # ==============================================================================

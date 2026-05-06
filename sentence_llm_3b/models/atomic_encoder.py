@@ -15,7 +15,7 @@ class AtomicNodeEncoder(nn.Module):
         self.cause_embed = nn.Embedding(max(1, num_causes), embed_dim)
         self.effect_embed = nn.Embedding(max(1, num_effects), embed_dim)
         
-        self.role_attention = nn.MultiheadAttention(embed_dim, num_heads=4)
+        self.role_attention = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
         self.output_proj = nn.Linear(embed_dim, embed_dim)
 
     def forward(self, subject_ids, verb_ids, object_ids, cause_ids, effect_ids):
@@ -26,12 +26,12 @@ class AtomicNodeEncoder(nn.Module):
         effect_emb = self.effect_embed(effect_ids)
         
         role_stack = torch.stack([subject_emb, verb_emb, object_emb, cause_emb, effect_emb], dim=1)
-        role_stack = role_stack.transpose(0, 1)
+        # role_stack is [batch, 5, 256]
         attn_out, _ = self.role_attention(role_stack, role_stack, role_stack)
-        attn_out = attn_out.transpose(0, 1)
         
-        role_weights = F.softmax(attn_out.mean(dim=-1), dim=-1)
-        combined = (attn_out * role_weights.unsqueeze(-1)).sum(dim=1)
+        # attn_out is [batch, 5, 256]
+        role_weights = F.softmax(attn_out.mean(dim=-1), dim=-1) # [batch, 5]
+        combined = (attn_out * role_weights.unsqueeze(-1)).sum(dim=1) # [batch, 256]
         return self.output_proj(combined)
         
     def forward_single_role(self, role: str, ids: torch.Tensor) -> torch.Tensor:

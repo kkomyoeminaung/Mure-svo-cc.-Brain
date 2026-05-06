@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from typing import List, Dict, Optional
 from .config import config
 
@@ -39,19 +40,18 @@ class ContextMemory:
     def resolve_pronouns(self, text: str) -> str:
         """Resolves 'it', 'that', 'this' based on history"""
         pronouns = ["it", "that", "this", "they"]
-        words = text.lower().split()
+        text_lower = text.lower()
         
-        has_pronoun = any(p in words for p in pronouns)
+        # Check if text contains any of the pronouns with word boundaries
+        has_pronoun = any(re.search(rf"\b{p}\b", text_lower) for p in pronouns)
         if not has_pronoun or not self.history:
             return text
-
-        # Replace with last system response subject or topic
-        last_resp = self.history[-1]["system"]
-        # Very simple resolution: use the stored topic
+        
+        # Replace with topic if available
         if self.current_topic:
             for p in pronouns:
-                text = text.replace(f" {p} ", f" {self.current_topic} ")
-                text = text.replace(f" {p}.", f" {self.current_topic}.")
+                # Use regex for word boundaries to avoid replacing substrings
+                text = re.sub(rf"\b{p}\b", self.current_topic, text, flags=re.IGNORECASE)
         
         return text
 

@@ -10,7 +10,7 @@ export class SVOCCParser {
 
   private questionWords = new Set([
     'what', 'why', 'how', 'when', 'where', 'who', 'which', 'should',
-    'ဘာ', 'ဘာလို့', 'ဘယ်လို', 'ဘယ်တော့', 'ဘယ်မှာ', 'ဘယ်သူ'
+    'ဘာ', 'ဘာလို့', 'ဘယ်လို', 'ဘယ်တော့', 'ဘယ်မှာ', 'ဘယ်သူ', 'လား', 'လဲ', 'နော်', 'လားဟင်'
   ]);
 
   public parse(sentence: string): SVOCCFrame {

@@ -2,21 +2,27 @@ import json
 import os
 from collections import defaultdict
 
+DEFAULT_PATH = os.environ.get("MURE_RULES_PATH", "data/brain/rules.json")
+
 class MUREEngine:
-    def __init__(self, rules_path="/content/drive/MyDrive/svo cc brain/rules/rules.json"):
+    def __init__(self, rules_path=DEFAULT_PATH):
         self.rules_path = rules_path
         self.rules = self.load_rules()
         self.cause_index = defaultdict(list)
         self.build_index()
 
     def load_rules(self):
-        if os.path.exists(self.rules_path):
+        if not self.rules_path or not os.path.exists(self.rules_path):
+            return []
+        try:
             with open(self.rules_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     return data.get('causalMemory', [])
                 return data
-        return []
+        except Exception as e:
+            print(f"Error loading rules: {e}")
+            return []
 
     def build_index(self):
         for rule in self.rules:
@@ -58,10 +64,12 @@ class MUREEngine:
         
         # Persist to disk
         try:
-            os.makedirs(os.path.dirname(self.rules_path), exist_ok=True)
+            dir_name = os.path.dirname(self.rules_path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
             with open(self.rules_path, 'w', encoding='utf-8') as f:
                 output = {"causalMemory": self.rules}
-                json.dump(output, f, indent=4)
+                json.dump(output, f, indent=4, ensure_ascii=False)
         except Exception as e:
             print(f"Error saving rules: {e}")
 

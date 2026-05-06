@@ -25,10 +25,12 @@ class KnowledgeDB:
         text = f"{cause} leads to {effect}"
         self.add_chunk(text)
 
-    def add_chunk(self, text):
+    def add_chunk(self, text, auto_save=True):
         embedding = self.model.encode([text])
         self.index.add(np.array(embedding, dtype=np.float32))
         self.docs.append(text)
+        if auto_save and len(self.docs) % 100 == 0:
+            self.save()
 
     def search(self, query):
         if self.index.ntotal == 0:

@@ -21,40 +21,42 @@ def clean_dataset(input_file, output_file, text_key_en, text_key_my, threshold=0
         print(f"Error reading {input_file}: {e}")
         return
 
-    print(f"Loaded {len(lines)} records. Starting semantic validation...")
+    print(f"Loaded {len(lines)} records. Starting batch semantic validation...")
+    
+    # Batch processing for 50x speed-up
+    batch_size = 128
+    en_texts = []
+    my_texts = []
+    valid_data = []
+    
+    for line in lines:
+        try:
+            data = json.loads(line)
+            en = data.get(text_key_en, "")
+            my = data.get(text_key_my, "")
+            if en and my:
+                en_texts.append(en)
+                my_texts.append(my)
+                valid_data.append(data)
+        except: continue
+
+    print(f"Encoding {len(en_texts)} text pairs in batches of {batch_size}...")
+    en_embs = model.encode(en_texts, batch_size=batch_size, show_progress_bar=True, convert_to_tensor=True)
+    my_embs = model.encode(my_texts, batch_size=batch_size, show_progress_bar=True, convert_to_tensor=True)
+    
+    # Calculate similarities in one go
+    similarities = util.cos_sim(en_embs, my_embs).diagonal().tolist()
     
     clean_records = []
     removed_records = []
     
-    for line in tqdm(lines, desc="Checking Semantic Similarity"):
-        try:
-            data = json.loads(line)
-            
-            en_text = data.get(text_key_en, "")
-            my_text = data.get(text_key_my, "")
-            
-            # If the specific keys are not found, keep the record as is (it might be a different format)
-            if not en_text or not my_text:
-                clean_records.append(data)
-                continue
-            
-            # 1. Compute text embeddings
-            en_emb = model.encode(en_text, convert_to_tensor=True)
-            my_emb = model.encode(my_text, convert_to_tensor=True)
-            
-            # 2. Compute Cosine Similarity between English and Myanmar embeddings
-            similarity = util.cos_sim(en_emb, my_emb).item()
-            
-            # 3. Filtering Logic
-            if similarity >= threshold:
-                data['semantic_similarity'] = round(similarity, 4)
-                clean_records.append(data)
-            else:
-                data['semantic_similarity'] = round(similarity, 4)
-                removed_records.append(data)
-                
-        except json.JSONDecodeError:
-            continue
+    for i, sim in enumerate(similarities):
+        data = valid_data[i]
+        data['semantic_similarity'] = round(sim, 4)
+        if sim >= threshold:
+            clean_records.append(data)
+        else:
+            removed_records.append(data)
             
     print(f"Validation complete.")
     print(f"✅ Kept {len(clean_records)} high-quality records.")

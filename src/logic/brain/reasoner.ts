@@ -19,10 +19,18 @@ export class SVOCCReasoner {
   private conversationHistory: ConversationTurn[] = [];
   private currentTopic: string | null = null;
   private knowledgeGraph: Map<string, string[]> = new Map();
+  private baseRealityRules: Map<string, string> = new Map([
+    ["sun rises", "daylight occurs"],
+    ["gravity acts", "objects fall down"],
+    ["fire burns", "heat is produced"],
+    ["water freezes", "ice forms"],
+    ["logic applies", "truth is found"]
+  ]);
   private dreamsProcessed = 0;
   private persistenceDir: string | null = null;
   private cachedGraph: any = null;
   private graphDirty = true;
+  private saveStmt: any = null;
 
   constructor(persistenceDir?: string) {
     const colabPath = '/content/drive/MyDrive/svo cc brain';
@@ -123,16 +131,20 @@ export class SVOCCReasoner {
     this.syllableIndex.clear();
     this.causalMemory.forEach((k, idx) => {
       const existing = this.causalIndex.get(k.cause) || [];
-      existing.push(k);
-      this.causalIndex.set(k.cause, existing);
+      if (existing.length < 100) {
+        existing.push(k);
+        this.causalIndex.set(k.cause, existing);
+      }
 
       // Syllable Index for Myanmar
       if (MyanmarProcessor.isMyanmar(k.cause)) {
         const syllables = MyanmarProcessor.segment(k.cause);
         syllables.forEach(s => {
           const set = this.syllableIndex.get(s) || new Set();
-          set.add(idx);
-          this.syllableIndex.set(s, set);
+          if (set.size < 500) {
+            set.add(idx);
+            this.syllableIndex.set(s, set);
+          }
         });
       }
     });
@@ -161,16 +173,30 @@ export class SVOCCReasoner {
 
   private loadFromDB() {
     try {
-      const rows = this.db.prepare('SELECT * FROM causal_rules').all() as any[];
-      this.causalMemory = rows.map(r => ({
-        cause: r.cause,
-        effect: r.effect,
-        strength: r.strength,
-        confidence: r.confidence,
-        occurrences: r.occurrences,
-        source: r.source,
-        timestamp: r.timestamp
-      }));
+      const startTime = Date.now();
+      console.log(`💾 MURE: Loading Knowledge Base from SQLite...`);
+      
+      this.causalMemory = [];
+      const stmt = this.db.prepare('SELECT * FROM causal_rules');
+      
+      // Safety Cap: Node.js memory limits mean we can't store millions of objects in an array.
+      // We load up to 500,000 for the fast in-memory semantic cache.
+      const MAX_MEMORY_CACHE = 500000;
+      let count = 0;
+
+      for (const r of stmt.iterate() as any) {
+        if (count++ < MAX_MEMORY_CACHE) {
+          this.causalMemory.push({
+            cause: r.cause,
+            effect: r.effect,
+            strength: r.strength,
+            confidence: r.confidence,
+            occurrences: r.occurrences,
+            source: r.source,
+            timestamp: r.timestamp
+          });
+        }
+      }
       
       const svoRows = this.db.prepare('SELECT * FROM memory_svo ORDER BY timestamp DESC LIMIT 1000').all() as any[];
       this.svoMemory = svoRows.map(r => JSON.parse(r.data));
@@ -178,7 +204,7 @@ export class SVOCCReasoner {
       const chatRows = this.db.prepare('SELECT * FROM conversation_history ORDER BY timestamp DESC LIMIT 20').all() as any[];
       this.conversationHistory = chatRows.map(r => ({
         userMessage: r.user_message,
-        brainResponse: r.brain_response,
+        brainResponse: r.brain_response, 
         frame: JSON.parse(r.frame_data),
         timestamp: r.timestamp
       })).reverse();
@@ -189,7 +215,7 @@ export class SVOCCReasoner {
         this.bootstrap();
       }
       
-      console.log(`📡 MURE Ultimate: Knowledge Base loaded from SQLite (${this.causalMemory.length} rules)`);
+      console.log(`📡 MURE Ultimate: Knowledge Base loaded from SQLite (${this.causalMemory.length} rules) in ${Date.now() - startTime}ms`);
     } catch (e) {
       console.error("⚠️ MURE: Failed to load from SQLite:", e);
       this.bootstrap();
@@ -197,17 +223,19 @@ export class SVOCCReasoner {
   }
 
   private saveToDB(knowledge: CausalKnowledge) {
-    const stmt = this.db.prepare(`
-      INSERT INTO causal_rules (cause, effect, strength, confidence, occurrences, source, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(cause, effect) DO UPDATE SET
-        strength = (strength + EXCLUDED.strength) / 2,
-        confidence = (confidence + EXCLUDED.confidence) / 2,
-        occurrences = occurrences + 1,
-        timestamp = EXCLUDED.timestamp
-    `);
+    if (!this.saveStmt) {
+      this.saveStmt = this.db.prepare(`
+        INSERT INTO causal_rules (cause, effect, strength, confidence, occurrences, source, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(cause, effect) DO UPDATE SET
+          strength = (strength + EXCLUDED.strength) / 2,
+          confidence = (confidence + EXCLUDED.confidence) / 2,
+          occurrences = occurrences + 1,
+          timestamp = EXCLUDED.timestamp
+      `);
+    }
     
-    stmt.run(
+    this.saveStmt.run(
       knowledge.cause, 
       knowledge.effect, 
       knowledge.strength, 
@@ -276,12 +304,16 @@ export class SVOCCReasoner {
       const existingIdx = this.causalIndex.get(causeLower);
       if (existingIdx && existingIdx.some(k => k.effect === effectLower)) return;
 
-      this.causalMemory.push(knowledge);
+      if (this.causalMemory.length < 500000) {
+        this.causalMemory.push(knowledge);
+      }
       pendingInsert.push(knowledge);
       
       const existing = this.causalIndex.get(causeLower) || [];
-      existing.push(knowledge);
-      this.causalIndex.set(causeLower, existing);
+      if (existing.length < 100) {
+         existing.push(knowledge);
+         this.causalIndex.set(causeLower, existing);
+      }
 
       // Memory-efficient graph update: Only add if not too many edges per node
       const effects = this.knowledgeGraph.get(causeLower) || [];
@@ -408,7 +440,8 @@ export class SVOCCReasoner {
       const mode = Math.random();
 
       // Protected: Users rules, Bootstrap, and Auto-learned text are never pruned here unless extremely weak
-      if (Math.random() < 0.05) {
+      // Optimized for memory: avoid filtering the full array if it's too large.
+      if (Math.random() < 0.05 && this.causalMemory.length < 100000) {
         const initialCount = this.causalMemory.length;
         this.causalMemory = this.causalMemory.filter(r => 
           r.source === 'user' || 
@@ -444,20 +477,22 @@ export class SVOCCReasoner {
         const conflicts = this.causalIndex.get(rule1.cause)?.filter(r => r.effect !== rule1.effect);
         if (conflicts && conflicts.length > 0) {
            const worst = conflicts.sort((a,b) => a.strength - b.strength)[0];
-           if (rule1.strength > worst.strength + 0.2) {
-             // Resolve conflict by pruning the weaker one
+           // Logic Control: Balanced Stability. We compare relative strength + source trust
+           const sourceWeight = rule1.source && rule1.source.includes('neural') ? 0.8 : 1.0;
+           if (rule1.strength * sourceWeight > worst.strength + 0.35) { 
              this.causalMemory = this.causalMemory.filter(r => r !== worst);
              this.rebuildIndex();
-             return { dream: "Conflict Resolution", connection: `Resolved contradiction for [${rule1.cause}]. Kept stronger effect: [${rule1.effect}].` };
+             return { dream: "Conflict Resolution", connection: `Dominant premise [${rule1.effect}] suppressed contradictory evidence.` };
            }
         }
 
         const candidates = this.causalIndex.get(rule1.effect);
         const rule2 = candidates ? candidates[Math.floor(Math.random() * candidates.length)] : null;
         
-        if (rule2 && rule1.cause !== rule2.effect) {
+        // Safety Check: Only apply transitive logic to strong causal links, not associative ones
+        if (rule2 && rule1.cause !== rule2.effect && rule1.strength > 0.8 && rule2.strength > 0.8) {
           // Transitive inference: A -> B, B -> C => A -> C
-          const synthesisStrength = (rule1.strength * rule2.strength) * 0.9;
+          const synthesisStrength = (rule1.strength * rule2.strength) * 0.85;
           this.addCausalKnowledge(rule1.cause, rule2.effect, synthesisStrength, 0.6, "generative_synthesis");
           return {
             dream: "Generative Synthesis",
@@ -517,6 +552,18 @@ export class SVOCCReasoner {
   public addCausalKnowledge(cause: string, effect: string, strength: number, confidence: number = 0.8, source: string = "user") {
     const causeLower = cause.toLowerCase().trim();
     const effectLower = effect.toLowerCase().trim();
+
+    // Resource Protection: Prevent memory/DB bloating with extremely long or empty strings
+    if (causeLower.length < 2 || effectLower.length < 2 || causeLower.length > 500 || effectLower.length > 500) {
+      console.warn(`⚠️ MURE: Resource Protection. Logic units must be between 2 and 500 characters. Skipping.`);
+      return;
+    }
+
+    // Axiomatic Consistency Check - Level 3 Protection
+    if (this.baseRealityRules.has(causeLower) && this.baseRealityRules.get(causeLower) !== effectLower) {
+      console.warn(`⚠️ MURE: Axiomatic Conflict. Discarding invalid logic: [${causeLower} -> ${effectLower}]. Core Reality expects: [${this.baseRealityRules.get(causeLower)}].`);
+      return;
+    }
     
     // Find in index first for performance
     const rulesAtCause = this.causalIndex.get(causeLower) || [];
@@ -537,36 +584,96 @@ export class SVOCCReasoner {
         source,
         timestamp: Date.now()
       };
-      this.causalMemory.push(knowledge);
+      
+      if (this.causalMemory.length < 500000) {
+        this.causalMemory.push(knowledge);
+      }
       this.saveToDB(knowledge);
       
       const effects = this.knowledgeGraph.get(causeLower) || [];
-      if (!effects.includes(effectLower)) {
+      if (!effects.includes(effectLower) && effects.length < 50) {
         effects.push(effectLower);
         this.knowledgeGraph.set(causeLower, effects);
       }
       this.graphDirty = true;
       
       // Update index
-      rulesAtCause.push(knowledge);
-      this.causalIndex.set(causeLower, rulesAtCause);
+      if (rulesAtCause.length < 100) {
+         rulesAtCause.push(knowledge);
+         this.causalIndex.set(causeLower, rulesAtCause);
+      }
 
       // Syllable Index Update for Myanmar
       if (MyanmarProcessor.isMyanmar(causeLower)) {
         const syllables = MyanmarProcessor.segment(causeLower);
         const idx = this.causalMemory.length - 1;
-        syllables.forEach(s => {
-          const set = this.syllableIndex.get(s) || new Set();
-          set.add(idx);
-          this.syllableIndex.set(s, set);
-        });
+        if (idx >= 0 && idx < 500000) {
+          syllables.forEach(s => {
+            const set = this.syllableIndex.get(s) || new Set();
+            if (set.size < 500) {
+                set.add(idx);
+                this.syllableIndex.set(s, set);
+            }
+          });
+        }
       }
       
       // Save for explicit user or external learning
     }
   }
 
+  public deepReasoningFromFrame(frame: SVOCCFrame, depth: number = 3): { result: string, chain: string[], calibratedConfidence: number } {
+    if (!frame.cause || !frame.effect) {
+       return { result: "No direct causal link found.", chain: [], calibratedConfidence: 0 };
+    }
+
+    const chain = [frame.cause, frame.effect];
+    let current = frame.effect;
+    let cumulativeStrength = frame.causalStrength || 0;
+
+    for (let i = 1; i < depth; i++) {
+       const nextMatches = this.findCausalMatches(current);
+       if (nextMatches.length > 0) {
+          const next = nextMatches[0];
+          // Prevent circular loops in deep reasoning
+          if (chain.includes(next.effect)) break;
+          
+          chain.push(next.effect);
+          current = next.effect;
+          cumulativeStrength *= next.strength;
+       } else {
+          break;
+       }
+    }
+
+    return {
+      result: `The logical sequence suggests: ${chain.join(" leads to ")}.`,
+      chain: chain,
+      calibratedConfidence: cumulativeStrength
+    };
+  }
+
+  public deepReasoning(text: string, depth: number = 3): { result: string, chain: string[], calibratedConfidence: number } {
+    const frame = this.reason(text);
+    return this.deepReasoningFromFrame(frame, depth);
+  }
+
   public reason(text: string, settings?: { rag?: boolean, temperature?: number }): SVOCCFrame {
+    // 1. Noise Filter - Robustness Fix
+    if (!text || (typeof text === 'string' && text.trim().length < 2)) {
+       return { 
+         cause: "Unknown", 
+         effect: "Logic requires at least 2 tokens.", 
+         causalStrength: 0, 
+         calibratedConfidence: 0, 
+         isQuestion: false, 
+         rawText: String(text) 
+       };
+    }
+
+    // 2. Myanmar Semantic Normalization (Basic)
+    const normalized = text.replace(/[\u200B\u200C]/g, '').trim(); 
+    
     this.interactionCount++;
     
     if (settings) {
@@ -579,7 +686,7 @@ export class SVOCCReasoner {
     }
 
     // 1. Resolve pronouns using context window if needed
-    const resolvedText = this.resolvePronouns(text);
+    const resolvedText = this.resolvePronouns(normalized);
     const frame = this.parser.parse(resolvedText);
 
     // 2. Perform reasoning
@@ -629,8 +736,9 @@ export class SVOCCReasoner {
         let resolved = text;
         pronouns.forEach(p => {
           // Use boundary for English pronouns, word match for Burmese
+          // Safety: Using a function replacement to avoid $1 interpretation
           const pattern = p.match(/[a-z]/i) ? new RegExp(`\\b${p}\\b`, 'gi') : new RegExp(p, 'g');
-          resolved = resolved.replace(pattern, referent);
+          resolved = resolved.replace(pattern, () => referent);
         });
         return resolved;
       }
@@ -643,21 +751,20 @@ export class SVOCCReasoner {
     let base = frame.causalStrength;
     
     // Apply Simplicity Bias from Moral Engine
-    // (We treat the number of segments in a frame as a proxy for complexity)
     const complexity = (frame.subject ? 1 : 0) + (frame.verb ? 1 : 0) + (frame.object ? 1 : 0) + (frame.cause ? 1 : 0) + (frame.effect ? 1 : 0);
     const biasMultiplier = this.conscience.applySimplicityBias(complexity);
     base = base * biasMultiplier;
 
-    // Boost based on occurrences in memory
-    const matches = this.causalMemory.filter(k => 
-      (frame.cause && k.cause === frame.cause && k.effect === frame.effect) ||
-      (frame.subject && k.cause === frame.subject)
-    );
-    
-    const maxOccurrences = matches.reduce((max, k) => Math.max(max, k.occurrences), 0);
-    const boost = Math.min(0.15, (maxOccurrences / 10));
-    
-    return Math.min(1, base + boost);
+    // Optimized occurrence check using DB - avoiding massive array filter
+    try {
+      const row = this.db.prepare('SELECT MAX(occurrences) as max_occ FROM causal_rules WHERE cause = ? AND effect = ?')
+                         .get(frame.cause?.toLowerCase(), frame.effect?.toLowerCase()) as any;
+      const maxOccurrences = row ? (row.max_occ || 0) : 0;
+      const boost = Math.min(0.15, (maxOccurrences / 10));
+      return Math.min(1, base + boost);
+    } catch (e) {
+      return base;
+    }
   }
 
   public recordTurn(userMessage: string, brainResponse: string, frame: SVOCCFrame) {
@@ -689,17 +796,42 @@ export class SVOCCReasoner {
   public learnFromSentence(sentence: string, source = "auto"): { success: boolean, contradiction?: string } {
     const frame = this.parser.parse(sentence);
     if (frame.cause && frame.effect) {
-      // Contradiction Check using optimized index
-      const rulesAtCause = this.causalIndex.get((frame.cause as string).toLowerCase());
-      const conflict = rulesAtCause?.find(k => k.effect !== (frame.effect as string).toLowerCase());
-      if (conflict && conflict.strength > 0.8) {
-        return { 
-          success: false, 
-          contradiction: `Conflict detected: I previously learned that "${frame.cause}" leads to "${conflict.effect}" (strength: ${conflict.strength.toFixed(2)}).` 
+      const cause = (frame.cause as string).toLowerCase().trim();
+      const effect = (frame.effect as string).toLowerCase().trim();
+
+      // 1. Axiomatic Filter: Prevent self-causality (A causes A)
+      if (cause === effect) {
+        return { success: false, contradiction: "Axiomatic Fault: A concept cannot be its own causal origin." };
+      }
+
+      // 1.5. Axiomatic Core Filter: Base Reality Rules violation check before learning
+      if (this.baseRealityRules.has(cause) && this.baseRealityRules.get(cause) !== effect) {
+        return {
+          success: false,
+          contradiction: `Axiomatic Conflict: Contradicts base reality rule: "${cause}" naturally causes "${this.baseRealityRules.get(cause)}", not "${effect}".`
         };
       }
 
-      this.addCausalKnowledge(frame.cause, frame.effect, frame.causalStrength, 0.8, source);
+      // 2. Circular Check: Detect A -> B -> A
+      const reversedRules = this.causalIndex.get(effect);
+      if (reversedRules && reversedRules.some(r => r.effect === cause)) {
+        return { 
+          success: false, 
+          contradiction: `Circular Logic Detected: I already know that "${effect}" leads back to "${cause}". A direct loop is forbidden.` 
+        };
+      }
+
+      // 3. Contradiction Check using optimized index (confidence > 0.85 for symbolic priority)
+      const rulesAtCause = this.causalIndex.get(cause);
+      const conflict = rulesAtCause?.find(k => k.effect !== effect);
+      if (conflict && conflict.confidence > 0.85) {
+        return { 
+          success: false, 
+          contradiction: `Conflict detected (High Confidence): I previously learned that "${cause}" leads to "${conflict.effect}" (confidence: ${conflict.confidence.toFixed(2)}).` 
+        };
+      }
+
+      this.addCausalKnowledge(cause, effect, frame.causalStrength, 0.8, source);
       return { success: true };
     }
     return { success: false };
@@ -748,31 +880,33 @@ export class SVOCCReasoner {
   }
 
   public importBrain(data: any) {
-    if (data.causalMemory) {
-      this.causalMemory = data.causalMemory;
-      this.graphDirty = true;
-      // Rebuild graph if not provided
-      if (!data.knowledgeGraph) {
-        this.knowledgeGraph.clear();
-        this.causalMemory.forEach(k => {
-          const effects = this.knowledgeGraph.get(k.cause) || [];
-          if (!effects.includes(k.effect)) {
-            effects.push(k.effect);
-            this.knowledgeGraph.set(k.cause, effects);
-          }
-        });
-      }
-      this.rebuildIndex();
-    }
-    if (data.svoMemory) this.svoMemory = data.svoMemory;
-    if (data.knowledgeGraph) this.knowledgeGraph = new Map(data.knowledgeGraph);
-    if (data.conversationHistory) this.conversationHistory = data.conversationHistory;
+    const importedRules = data.causalMemory || [];
     
-    // Legacy sync
-    const transaction = this.db.transaction((rules: CausalKnowledge[]) => {
-      rules.forEach(k => this.saveToDB(k));
-    });
-    transaction(this.causalMemory);
+    // Save to DB in smaller batches
+    const BATCH_SIZE = 5000;
+    try {
+      for (let i = 0; i < importedRules.length; i += BATCH_SIZE) {
+          const batch = importedRules.slice(i, i + BATCH_SIZE);
+          const transaction = this.db.transaction((rules: CausalKnowledge[]) => {
+              rules.forEach(k => this.saveToDB(k));
+          });
+          transaction(batch);
+      }
+    } catch(e) {
+      console.error("MURE: Import batch save to DB failed:", e);
+    }
+
+    // Now reload safely from DB which caps at MAX_MEMORY_CACHE
+    this.loadFromDB();
+
+    if (data.svoMemory) this.svoMemory = data.svoMemory;
+    if (data.knowledgeGraph) {
+       this.knowledgeGraph = new Map(data.knowledgeGraph);
+       this.graphDirty = false;
+    } else {
+       this.graphDirty = true;
+    }
+    if (data.conversationHistory) this.conversationHistory = data.conversationHistory;
   }
 
   public getGraphData(): { nodes: { id: string }[], links: { source: string, target: string, value: number }[] } {
@@ -863,7 +997,27 @@ export class SVOCCReasoner {
   }
 
   private fastSimilarity(query: string, key: string, queryTokens: string[]): number {
-     if (key.includes(query) || query.includes(key)) return 0.9;
+     const isMyanmar = MyanmarProcessor.isMyanmar(query);
+     
+     // Strict exact match
+     if (query === key) return 1.0;
+
+     // For English, use word boundaries to avoid matching "rain" in "training"
+     if (!isMyanmar) {
+        const queryRegex = new RegExp(`\\b${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+        if (queryRegex.test(key)) return 0.9;
+        
+        const keyRegex = new RegExp(`\\b${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+        if (keyRegex.test(query)) return 0.9;
+     } else {
+        // For Myanmar (no spaces), substring check is more acceptable but still risky
+        // We prioritize longer matches
+        if (key.includes(query) || query.includes(key)) {
+            const overlapRatio = Math.min(query.length, key.length) / Math.max(query.length, key.length);
+            return 0.5 + (overlapRatio * 0.4); // Max 0.9
+        }
+     }
+
      let matchCount = 0;
      for (const token of queryTokens) {
         if (key.includes(token)) matchCount++;
@@ -911,26 +1065,35 @@ export class SVOCCReasoner {
   public forget(text: string): boolean {
     const frame = this.parser.parse(text);
     
-    // Moral Engine Check: Prevent deletion of core thesis data
     const evalResult = this.conscience.evaluateAction('delete', text);
     if (evalResult.blocked) {
       console.warn(evalResult.moralNote);
       return false;
     }
 
-    const initialLen = this.causalMemory.length;
-    
-    if (frame.cause && frame.effect) {
-      const prevLen = this.causalMemory.length;
-      this.causalMemory = this.causalMemory.filter(k => !(k.cause === frame.cause && k.effect === frame.effect));
-      if (this.causalMemory.length !== prevLen) this.graphDirty = true;
-    } else if (frame.cause) {
-      const prevLen = this.causalMemory.length;
-      this.causalMemory = this.causalMemory.filter(k => k.cause !== frame.cause);
-      if (this.causalMemory.length !== prevLen) this.graphDirty = true;
+    try {
+      let removed = 0;
+      if (frame.cause && frame.effect) {
+        const stmt = this.db.prepare('DELETE FROM causal_rules WHERE cause = ? AND effect = ?');
+        const res = stmt.run(frame.cause.toLowerCase(), frame.effect.toLowerCase());
+        removed = res.changes;
+      } else if (frame.cause) {
+        const stmt = this.db.prepare('DELETE FROM causal_rules WHERE cause = ?');
+        const res = stmt.run(frame.cause.toLowerCase());
+        removed = res.changes;
+      }
+
+      if (removed > 0) {
+        // Only rebuild indexes if deletions happened
+        this.loadFromDB(); 
+        this.graphDirty = true;
+        return true;
+      }
+    } catch (e) {
+      console.error("⚠️ MURE: Deletion failed:", e);
     }
     
-    return this.causalMemory.length < initialLen;
+    return false;
   }
 
   public getContext(): ConversationTurn[] {
@@ -942,13 +1105,46 @@ export class SVOCCReasoner {
   }
 
   public getStats(): BrainStats & { moralSignature: string } {
+    let graphEdges = 0;
+    try {
+      for (const v of this.knowledgeGraph.values()) {
+        graphEdges += Array.isArray(v) ? v.length : 0;
+      }
+    } catch (e) {
+      console.warn("MURE: Stats calculation error", e);
+    }
+    
+    // Get accurate count from DB for 15M hyperscale
+    let totalRules = this.causalMemory.length;
+    try {
+      const row = this.db.prepare('SELECT COUNT(*) as count FROM causal_rules').get() as any;
+      if (row && row.count > totalRules) totalRules = row.count;
+    } catch (e) {
+      console.error("MURE: Stats fetch error", e);
+    }
+
     return {
-      causalRules: this.causalMemory.length,
+      causalRules: totalRules,
       svoFrames: this.svoMemory.length,
       graphNodes: this.knowledgeGraph.size,
-      graphEdges: Array.from(this.knowledgeGraph.values()).reduce((sum, v) => sum + v.length, 0),
+      graphEdges: graphEdges,
       dreamsProcessed: this.dreamsProcessed,
       moralSignature: this.conscience.getSignature()
     };
+  }
+
+  /**
+   * High-Performance Rule Iterator for streaming massive datasets (15M+ rules)
+   * This prevents memory pressure by yielding one rule at a time from SQLite.
+   */
+  public *getRulesIterator() {
+    try {
+      const stmt = this.db.prepare('SELECT cause, effect, strength FROM causal_rules');
+      for (const row of stmt.iterate()) {
+        yield row;
+      }
+    } catch (e) {
+      console.error("MURE: Streaming export failed", e);
+    }
   }
 }

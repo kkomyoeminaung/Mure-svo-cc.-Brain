@@ -35,7 +35,7 @@ class ModelConfig:
 @dataclass
 class DataConfig:
     """Data configuration"""
-    rules_path: str = "/content/drive/MyDrive/svo cc brain/rules/rules.json"
+    rules_path: str = "data/brain/rules.json"
     data_dir: str = "./data"
     cache_dir: str = "./cache"
     max_rules: int = 2000000  # 2 million rules

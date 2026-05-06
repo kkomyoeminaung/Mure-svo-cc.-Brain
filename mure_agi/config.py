@@ -10,9 +10,17 @@ class MUREConfig:
     BRAIN_BASE_PATH: str = os.environ.get('MURE_BRAIN_PATH', '/content/drive/MyDrive/svo cc brain') if os.path.exists("/content/drive") else "./brain_data"
     
     # Paths
-    RULES_DB_PATH = f"{BRAIN_BASE_PATH}/mure_rules.db"
-    CONTEXT_PATH = f"{BRAIN_BASE_PATH}/context.json"
-    LOG_DIR = f"{BRAIN_BASE_PATH}/logs"
+    @property
+    def RULES_DB_PATH(self):
+        return f"{self.BRAIN_BASE_PATH}/mure_rules.db"
+    
+    @property
+    def CONTEXT_PATH(self):
+        return f"{self.BRAIN_BASE_PATH}/context.json"
+    
+    @property
+    def LOG_DIR(self):
+        return f"{self.BRAIN_BASE_PATH}/logs"
     
     # --- Search Settings ---
     FUZZY_THRESHOLD = 60.0
@@ -36,11 +44,12 @@ class MUREConfig:
     MIN_LEARNING_CONFIDENCE = 0.5
     DEDUPLICATION_THRESHOLD = 0.92
 
-def init_directories():
+def init_directories(cfg: MUREConfig = None):
     """Ensure all required directories exist"""
+    cfg = cfg or config
     paths = [
-        MUREConfig.BRAIN_BASE_PATH,
-        MUREConfig.LOG_DIR
+        cfg.BRAIN_BASE_PATH,
+        cfg.LOG_DIR
     ]
     for p in paths:
         Path(p).mkdir(parents=True, exist_ok=True)

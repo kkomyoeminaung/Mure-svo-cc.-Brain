@@ -13,6 +13,18 @@ class MUREGuardrail:
         return True
 
     @staticmethod
+    def is_safe(text: str) -> bool:
+        """Basic content safety check"""
+        if not text or len(text.strip()) < 2:
+            return False
+        # Harmful content keywords (extend as needed)
+        harmful = ["harm", "kill", "destroy", "weapon", "exploit", "terror", "attack"]
+        text_lower = text.lower()
+        if any(h in text_lower for h in harmful):
+            return False
+        return True
+
+    @staticmethod
     def detect_contradiction(new_rule: Dict, existing_rules: List[Dict]) -> Tuple[bool, str]:
         """Checks if a new rule contradicts existing knowledge"""
         for rule in existing_rules:

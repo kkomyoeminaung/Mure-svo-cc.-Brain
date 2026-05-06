@@ -10,6 +10,7 @@ export interface SVOCCFrame {
   questionType?: string;
   isQuestion: boolean;
   rawText: string;
+  source?: string;
   isContradiction?: boolean;
   chain?: [string, string, number][];
 }

@@ -82,20 +82,20 @@ export default function SettingsPanel({
 
         <div className="space-y-2 p-3 bg-slate-950 rounded-xl border border-white/5">
           <div className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter mb-3">
-             🎨 LLM AI Fine-Tuning 
+             🌌 MURE Master Auto-Pipeline
           </div>
           <div className="grid grid-cols-2 gap-2">
             <a href="/api/dataset/download" download className="flex items-center justify-center gap-2 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-400 border border-indigo-500/20 px-3 py-2 rounded-lg text-[10px] font-bold uppercase transition flex-1 text-center">
               <Download className="w-3 h-3" />
-              Dataset JSONL
+              15M Dataset JSONL
             </a>
             <a href="/api/dataset/colab" download className="flex items-center justify-center gap-2 bg-pink-600/20 hover:bg-pink-600/40 text-pink-400 border border-pink-500/20 px-3 py-2 rounded-lg text-[10px] font-bold uppercase transition flex-1 text-center">
               <FileCode2 className="w-3 h-3" />
-              Colab Notebook
+              Master Colab (v7.3)
             </a>
           </div>
           <div className="text-[8px] text-slate-500 mt-2">
-            Download the JSONL and Colab Notebook to Auto Fine-tune Unsloth Gemma-2 or Llama-3!
+            Download the Official MURE-AGI Master Colab to auto-train, synchronize logic, and serve the API via 1-Click Ngrok Tunnel natively!
           </div>
         </div>
 

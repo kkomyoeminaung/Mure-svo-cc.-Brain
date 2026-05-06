@@ -63,11 +63,16 @@ class MUREUltimateAGI:
     async def run_dream_mode(self):
         await self.dreamer.start_dream_loop()
 
+import threading
+
 # Singleton for easy import
 mure_agi = None
+_lock = threading.Lock()
 
 def get_mure():
     global mure_agi
     if mure_agi is None:
-        mure_agi = MUREUltimateAGI()
+        with _lock:
+            if mure_agi is None:  # Double-checked locking
+                mure_agi = MUREUltimateAGI()
     return mure_agi

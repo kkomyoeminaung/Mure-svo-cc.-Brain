@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 from dataclasses import dataclass
 from prd_llm.reasoner.mure_engine import MUREEngine
 from prd_llm.reasoner.mure_cot_speaker import SVOCCTranslator
+from prd_llm.brain.model import PRDLLMBrain
 
 @dataclass
 class SVOCCThought:
@@ -112,9 +113,10 @@ class MUREUltimate:
     """
     
     def __init__(self, rules_path: str = None):
-        self.reasoner = MUREEngine(rules_path)
+        self.reasoner = MUREEngine(rules_path) if rules_path else MUREEngine()
         self.translator = SVOCCTranslator()
         self.guardrail = ConsistencyGuardrail()
+        self.llm_brain = None
         
         self.intents = {
             "greeting": ["hello", "hi", "hey", "မင်္ဂလာ", "ဟိုင်း"],
@@ -150,16 +152,26 @@ class MUREUltimate:
     
     def handle_teaching(self, text: str) -> str:
         """Dynamic learning: Add new causal rule from user input"""
-        # Simple extraction: "A causes B" / "A ကြောင့် B"
+        # Improved extraction with multiple patterns
         text_lower = text.lower()
-        # Pattern matching
-        match = re.search(r'(.+?) (?:causes|leads to|ကြောင့်) (.+)', text_lower)
+        patterns = [
+            r'(.+?)\s+(?:causes|leads to|results in|triggers)\s+(.+)',
+            r'(.+?)\s+→\s+(.+)',
+            r'(.+?)\s+ကြောင့်\s*(.+?)\s*(?:ဖြစ်|တယ်|သည်|ပေါ်)',
+            r'(.+?)\s+ဖြစ်လို့\s*(.+)',
+        ]
+        
+        match = None
+        for pat in patterns:
+            match = re.search(pat, text_lower)
+            if match: break
+            
         if match:
             cause = match.group(1).strip()
             effect = match.group(2).strip()
             self.reasoner.add_rule(cause, effect, 0.95, "user_teach")
             return f"I have learned: {cause} causes {effect}. Thank you for teaching me!"
-        return "I couldn't understand the rule. Please format it as 'Cause causes Effect'."
+        return "I couldn't understand the rule. Please format it as 'Cause causes Effect' or use '→' or 'ကြောင့်'."
     
     def handle_template_learning(self, text: str) -> str:
         """Add new natural language template from user example"""
@@ -211,8 +223,13 @@ class MUREUltimate:
         # Reasoning pipeline
         thought = self.think(user_input)
         
-        if not thought.cause or not thought.effect:
-            return f"I don't know why that happens. Could you teach me? (Format: 'Cause causes Effect')", {"source": "unknown"}
+        # Fallback to LLM Brain if reasoning confidence is low
+        if (not thought.cause or not thought.effect or thought.confidence < 0.5):
+            if self.llm_brain is None:
+                self.llm_brain = PRDLLMBrain()
+            
+            llm_response = self.llm_brain.generate(user_input, "Insufficient causal context.")
+            return llm_response, {"source": "llm_brain_fallback"}
         
         # Speak & Verify
         generated = self.translator.translate(thought.__dict__)

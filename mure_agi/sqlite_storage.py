@@ -10,7 +10,10 @@ class SQLiteStorage:
         self._init_db()
 
     def _get_connection(self):
-        return sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
 
     def _init_db(self):
         conn = self._get_connection()

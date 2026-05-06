@@ -48,8 +48,13 @@ def run_generation():
             outputs = llm.generate(batch_prompts, sampling_params)
             
             for i, output in enumerate(outputs):
-                cause = batch_prompts[i].split("Cause: ")[1].split("\n")[0]
+                cause = batch_prompts[i].split("Cause: ")[1].split("\n")[0].strip()
                 effect = output.outputs[0].text.strip()
+                
+                # Validation: avoid blank, too short, or echo effects
+                if not effect or len(effect) < 5: continue
+                if cause.lower() in effect.lower(): continue
+                if len(effect.split()) > 20: continue # Keep it concise
                 
                 rule = {
                     "cause": cause,
@@ -58,9 +63,10 @@ def run_generation():
                     "source": "vllm_generator"
                 }
                 f.write(json.dumps(rule) + "\n")
+                current_count += 1
             
-            current_count += BATCH_SIZE
-            pbar.update(BATCH_SIZE)
+            pbar.n = current_count
+            pbar.refresh()
 
 if __name__ == "__main__":
     run_generation()

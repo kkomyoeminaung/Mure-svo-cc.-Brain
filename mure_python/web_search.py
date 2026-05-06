@@ -23,6 +23,10 @@ class WebSearchService:
                 "srlimit": 3
             }
             response = requests.get(search_url, params=params, headers={"User-Agent": self.user_agent}, timeout=5.0)
+            if response.status_code == 429:
+                print("Wikipedia rate limit hit. Backing off...")
+                return []
+            response.raise_for_status()
             data = response.json()
             
             results = []
@@ -42,6 +46,9 @@ class WebSearchService:
                     "format": "json"
                 }
                 ext_resp = requests.get(search_url, params=ext_params, headers={"User-Agent": self.user_agent}, timeout=5.0)
+                if ext_resp.status_code == 429:
+                    return results
+                ext_resp.raise_for_status()
                 ext_data = ext_resp.json()
                 
                 pages = ext_data.get("query", {}).get("pages", {})
@@ -80,7 +87,14 @@ class WebSearchService:
         for pattern_str, strength in causal_patterns:
             for match in re.finditer(pattern_str, text, re.IGNORECASE):
                 if len(match.groups()) >= 2:
-                    cause, effect = match.group(1).strip(), match.group(2).strip()
+                    is_passive = 'is caused by' in pattern_str.lower()
+                    
+                    if is_passive:
+                         # Effect is caused by Cause
+                         effect, cause = match.group(1).strip(), match.group(2).strip()
+                    else:
+                         cause, effect = match.group(1).strip(), match.group(2).strip()
+
                     # ensure words aren't too long realistically
                     if len(cause.split()) <= 8 and len(effect.split()) <= 8:
                         extracted.append({

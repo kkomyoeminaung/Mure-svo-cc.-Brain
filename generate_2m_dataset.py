@@ -42,12 +42,16 @@ CAUSAL_TEMPLATES = [
     # Negation variants
     ("Does {cause} always lead to {effect}?",
      "{'Yes, with high confidence' if strength > 0.9 else 'Not always, but often'} — strength: {strength:.2f}."),
+    # Negative examples (Anti-Hallucination)
+    ("Does {cause} cause {unrelated}?", "No, there is no direct causal link between {cause} and {unrelated}. (Confidence: 0.00)"),
+    ("Is {effect} a result of {unrelated}?", "No, {effect} is typically caused by {cause}, not {unrelated}."),
     # Myanmar templates
     ("{cause} ဆိုတာ ဘာကို ဖြစ်စေသလဲ?", "{cause} ကြောင့် {effect} ဖြစ်ပေါ်ပါသည်။ (ယုံကြည်မှု: {strength:.2f})"),
     ("{cause} ရဲ့ အကျိုးဆက်ကဘာလဲ?", "အကျိုးဆက်မှာ {effect} ဖြစ်ပါသည်။"),
     ("{cause} ဖြစ်ရင် ဘာဖြစ်မလဲ?", "{cause} ဖြစ်ပါက {effect} ဖြစ်ပေါ်ပါမည်။"),
     ("{cause} ၏ ရလဒ်ကား မည်သို့?", "ရလဒ်မှာ {effect} ဖြစ်ပါသည်။ (တိကျမှု: {strength:.2f})"),
     ("{effect} ဖြစ်ရခြင်းရဲ့ အကြောင်းရင်းက ဘာ?", "{cause} သည် {effect} ကို ဖြစ်စေသော အကြောင်းရင်းဖြစ်သည်။"),
+    ("{cause} က {unrelated} ကို ဖြစ်စေသလား?", "မဟုတ်ပါ။ {cause} နှင့် {unrelated} အကြား တိုက်ရိုက်အကြောင်းအကျိုးဆက်နွယ်မှု မရှိပါ။"),
 ]
 
 # ============================================================
@@ -192,38 +196,72 @@ DOMAIN_RULES = {
 }
 
 def load_base_rules(custom_rules_path=None):
-    """Load rules from rules.json"""
-    if custom_rules_path and os.path.exists(custom_rules_path):
-        path = custom_rules_path
-    else:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/brain/rules.json")
+    """Load rules from SQLite DB or rules.json"""
+    import sqlite3
     
-    if os.path.exists(path):
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data.get('causalMemory', [])
-        return data
+    # Priority 1: SQLite DB (Active production storage)
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/brain/mure_rules.db")
+    if os.path.exists(db_path):
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT cause, effect, strength FROM causal_rules")
+            rows = cursor.fetchall()
+            conn.close()
+            return [{"cause": r["cause"], "effect": r["effect"], "strength": r["strength"]} for r in rows]
+        except Exception as e:
+            print(f"⚠️ Error reading SQLite DB: {e}")
+
+    # Priority 2: rules.json (Import/Export format)
+    if custom_rules_path and os.path.exists(custom_rules_path):
+        paths = [custom_rules_path]
+    else:
+        paths = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/brain/rules.json"),
+            "data/brain/rules.json",
+            "mure_rules.db" # In case it's in the current dir
+        ]
+    
+    for path in paths:
+        if os.path.exists(path) and path.endswith(".json"):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    return data.get('causalMemory', [])
+                return data
+            except Exception as e:
+                print(f"⚠️ Error reading JSON rules: {e}")
+
     return []
 
-def format_template(template_pair, cause, effect, strength):
+def format_template(template_pair, cause, effect, strength, unrelated=None):
     """Safely format a template pair"""
     q_tmpl, a_tmpl = template_pair
     try:
-        instruction = q_tmpl.format(cause=cause, effect=effect, strength=strength)
-        output = a_tmpl.format(cause=cause, effect=effect, strength=strength)
-        # Fix eval-like expressions (simplified)
+        # Determine specific wording for strength-based templates
+        strength_word = "Yes" if strength > 0.8 else "Moderately"
+        negation_word = "Yes, with high confidence" if strength > 0.9 else "Not always, but often"
+        
+        # Prepare params
+        params = {
+            "cause": cause, 
+            "effect": effect, 
+            "strength": strength, 
+            "unrelated": unrelated or "random noise variables"
+        }
+        
+        instruction = q_tmpl.format(**params)
+        output = a_tmpl.format(**params)
+        
+        # Fix the hardcoded ternary logic strings in templates if they remain
         if "{'Yes'" in output or "{'Not'" in output:
-            if strength > 0.8:
-                output = output.replace("{'Yes' if strength > 0.8 else 'Moderately'}", "Yes")
-                output = output.replace("{'Yes, with high confidence' if strength > 0.9 else 'Not always, but often'}", 
-                                       "Yes, with high confidence" if strength > 0.9 else "Not always, but often")
-            else:
-                output = output.replace("{'Yes' if strength > 0.8 else 'Moderately'}", "Moderately")
-                output = output.replace("{'Yes, with high confidence' if strength > 0.9 else 'Not always, but often'}", 
-                                       "Not always, but often")
+             output = output.replace("{'Yes' if strength > 0.8 else 'Moderately'}", strength_word)
+             output = output.replace("{'Yes, with high confidence' if strength > 0.9 else 'Not always, but often'}", negation_word)
+             
         return instruction, output
-    except Exception:
+    except Exception as e:
         return None, None
 
 def generate_chain_entries(rules_by_cause, max_entries=200000):
@@ -314,6 +352,8 @@ def generate_dataset(target_count=5_000_000, output_file="mure_finetune_5M.jsonl
         print("⚠️ No rules found. Using fallback hardcoded rules.")
         all_rules = [{"cause": "test", "effect": "result", "strength": 0.9}]
 
+    causes_list = [r['cause'] for r in all_rules]
+    
     rules_by_cause = {}
     for r in all_rules:
         k = str(r.get('cause', '')).lower()
@@ -334,7 +374,13 @@ def generate_dataset(target_count=5_000_000, output_file="mure_finetune_5M.jsonl
             if strategy < 0.6: # 60% Template expansion
                 rule = random.choice(all_rules)
                 tmpl = random.choice(CAUSAL_TEMPLATES)
-                inst, out = format_template(tmpl, rule['cause'], rule['effect'], rule.get('strength', 0.8))
+                
+                # Pick an unrelated cause/effect for anti-hallucination templates
+                unrelated = random.choice(causes_list)
+                while unrelated == rule['cause'] or unrelated == rule['effect']:
+                    unrelated = random.choice(causes_list)
+                
+                inst, out = format_template(tmpl, rule['cause'], rule['effect'], rule.get('strength', 0.8), unrelated)
             elif strategy < 0.85: # 25% Causal chains
                 # Fast chain picking
                 c1 = random.choice(list(rules_by_cause.keys()))

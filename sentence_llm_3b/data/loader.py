@@ -30,15 +30,15 @@ class AtomicNodeBuilder:
     def __init__(self):
         self.node_types = ['subject', 'verb', 'object', 'cause', 'effect']
         self.nodes = {nt: {} for nt in self.node_types}
-        self.next_id = 0
+        self.next_id = {nt: 0 for nt in self.node_types}
         
     def add_node(self, text: str, node_type: str) -> int:
         text_lower = text.lower().strip()
         if text_lower in self.nodes[node_type]:
             return self.nodes[node_type][text_lower]
-        node_id = self.next_id
+        node_id = self.next_id[node_type]
         self.nodes[node_type][text_lower] = node_id
-        self.next_id += 1
+        self.next_id[node_type] += 1
         return node_id
     
     def build_from_rules(self, rules: List[Dict]) -> Dict:
@@ -75,8 +75,16 @@ class SentenceNodeBuilder:
                 f"When {cause}, {effect} happens.",
                 f"{effect} is caused by {cause}.",
                 f"Due to {cause}, {effect} occurs.",
+                f"If {cause} then {effect}.",
+                f"{cause} leads to {effect}.",
+                f"{cause} ထို့ကြောင့် {effect} ဖြစ်သည်။",
+                f"{cause} ဖြစ်ပေါ်လာတဲ့အခါ {effect} ဖြစ်လာပါတယ်။",
+                f"{effect} ဖြစ်ရခြင်းအကြောင်းအရင်းမှာ {cause} ဖြစ်သည်။",
+                f"{cause} ကြောင့် {effect} ဖြစ်သည်"
             ]
-            sentence = random.choice(templates)
+            # BUG-LOAD-01: Deterministic template selection per rule index
+            template_idx = i % len(templates)
+            sentence = templates[template_idx]
             
             atomic_ids = {
                 'subject': self.atomic_builder.add_node(cause, 'subject'),
@@ -103,20 +111,22 @@ class CausalChainBuilder:
     def __init__(self, sentence_builder: SentenceNodeBuilder):
         self.sentence_builder = sentence_builder
         self.chains = []
-        self.effect_to_sentence = defaultdict(list)
+        self.cause_to_sentence = defaultdict(list)
         
     def build_chains(self, max_depth: int = 4) -> List[Dict]:
         print("Building Level 3: Causal Chain Nodes...")
         for sentence in self.sentence_builder.sentences:
-            effect = sentence['effect'].lower()
-            self.effect_to_sentence[effect].append(sentence['id'])
+            cause = sentence['cause'].lower()
+            self.cause_to_sentence[cause].append(sentence['id'])
             
         for start_sentence in tqdm(self.sentence_builder.sentences[:10000], desc="Building chains"):
             chain = [start_sentence['id']]
             current_id = start_sentence['id']
             for _ in range(max_depth - 1):
                 current_effect = self.sentence_builder.sentences[current_id]['effect'].lower()
-                next_ids = [nid for nid in self.effect_to_sentence.get(current_effect, []) if nid != current_id]
+                visited_in_chain = set(chain)
+                next_ids = [nid for nid in self.cause_to_sentence.get(current_effect, []) 
+                            if nid not in visited_in_chain]
                 if not next_ids:
                     break
                 current_id = next_ids[0]
